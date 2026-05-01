@@ -1,0 +1,96 @@
+{
+  "id": "repo-analyze-test-slack-notify",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "analyze-repo",
+      "type": "github.repo.analyze",
+      "config": {
+        "owner": "fintelconnect",
+        "repo": "fintel-webcrawler-monorepo",
+        "ref": "main",
+        "focus": "source",
+        "includePackageJson": true
+      }
+    },
+    {
+      "id": "read-github-files",
+      "type": "github.files.read",
+      "config": {
+        "smartSelectMode": "core",
+        "smartMaxFiles": 12,
+        "targetFiles": [],
+        "maxCharsPerFile": 25000,
+        "maxTotalChars": 400000
+      }
+    },
+    {
+      "id": "llm-generate-tests",
+      "type": "llm.generate-unit-tests",
+      "config": {
+        "targetLanguage": "auto",
+        "preferredTestStyle": "auto",
+        "maxGeneratedFiles": 15,
+        "maxSourceFiles": 25,
+        "maxCharsPerSourceFile": 24000,
+        "maxTotalInputChars": 400000,
+        "model": "gpt-4o-mini",
+        "temperature": 0.2
+      }
+    },
+    {
+      "id": "run-tests",
+      "type": "github.repo.run-tests",
+      "config": {
+        "repoSubpath": "web_monitor_api",
+        "testCommand": "npm test",
+        "timeout": 300000
+      }
+    },
+    {
+      "id": "slack-tests",
+      "type": "slack.send",
+      "config": {
+        "token": "xoxb-REPLACE_WITH_SLACK_BOT_TOKEN",
+        "channel": "#webhook_test",
+        "mrkdwn": true,
+        "interpolateFromInput": true,
+        "text": "*Test pipeline (analyze → read → LLM → run)*\n• *Repo:* `{{repo}}`  • *Ref:* `{{ref}}`  • *Command:* `{{testCommand}}`\n• *Outcome:* success=`{{success}}`  • *Exit:* `{{exitCode}}`  • *Duration:* {{duration}}\n• *Totals:* {{totalTests}} (passed {{passed}}, failed {{failed}}, skipped {{skipped}})  • *Pass rate:* {{passRate}}%\n• *Summary:* {{summary}}"
+      }
+    },
+    {
+      "id": "list-branches",
+      "type": "github.repo.list-branches",
+      "config": {
+        "includeTags": false,
+        "perPage": 100,
+        "maxPages": 5
+      }
+    },
+    {
+      "id": "slack-branches",
+      "type": "slack.send",
+      "config": {
+        "token": "xoxb-REPLACE_WITH_SLACK_BOT_TOKEN",
+        "channel": "#webhook_test",
+        "mrkdwn": true,
+        "interpolateFromInput": true,
+        "text": "*Branches* — `{{fullName}}`\n• *Default:* `{{defaultBranch}}`\n• *Names (preview):* {{branchSummary}}\n• *Truncated:* {{branchesTruncated}}"
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "analyze-repo" },
+    { "source": "analyze-repo", "target": "read-github-files" },
+    { "source": "read-github-files", "target": "llm-generate-tests" },
+    { "source": "llm-generate-tests", "target": "run-tests" },
+    { "source": "run-tests", "target": "slack-tests" },
+    { "source": "analyze-repo", "target": "list-branches" },
+    { "source": "list-branches", "target": "slack-branches" }
+  ]
+}

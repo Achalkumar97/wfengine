@@ -1,0 +1,40 @@
+{
+  "id": "email-notify-slack",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "slack-send",
+      "type": "slack.send",
+      "config": {
+        "token": "REPLACE_WITH_SLACK_BOT_XOXB_TOKEN",
+        "channel": "REPLACE_WITH_CHANNEL_ID_OR_NAME",
+        "text": "Workflow step: posting to Slack before email notification to achal@signitysolutions.com",
+        "mrkdwn": true
+      }
+    },
+    {
+      "id": "email-send",
+      "type": "email.send",
+      "config": {
+        "host": "smtp.gmail.com",
+        "port": 465,
+        "secure": true,
+        "authUser": "1997achalkumar@gmail.com",
+        "authPass": "REPLACE_WITH_GMAIL_APP_PASSWORD",
+        "from": "1997achalkumar@gmail.com",
+        "to": "achal@signitysolutions.com",
+        "subject": "Workflow OK — Slack notified, email confirmation",
+        "text": "Hello,\n\nYour workflow is working fine. A Slack message was posted (webhook-style notification via slack.send). This email confirms your message has been sent to the recipient.\n\nFor an exact send time, use the workflow run result: finishedAt / startedAt in the Studio run panel.\n\nRegards"
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "slack-send" },
+    { "source": "slack-send", "target": "email-send" }
+  ]
+}

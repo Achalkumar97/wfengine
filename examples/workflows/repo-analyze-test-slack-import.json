@@ -1,0 +1,47 @@
+{
+  "id": "repo-analyze-test-slack-notify",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "analyze-repo",
+      "type": "github.repo.analyze",
+      "config": {
+        "owner": "fintelconnect",
+        "repo": "fintel-webcrawler-monorepo",
+        "ref": "main",
+        "focus": "all",
+        "includePackageJson": true
+      }
+    },
+    {
+      "id": "run-tests",
+      "type": "github.repo.run-tests",
+      "config": {
+        "ref": "main",
+        "testCommand": "npm test",
+        "timeout": 300000
+      }
+    },
+    {
+      "id": "slack-notify",
+      "type": "slack.send",
+      "config": {
+        "token": "xoxb-REPLACE_WITH_SLACK_BOT_TOKEN",
+        "channel": "REPLACE_CHANNEL_ID_OR_NAME",
+        "mrkdwn": true,
+        "interpolateFromInput": true,
+        "text": "*Repository test report*\n• *Slug:* `{{repo}}`  • *Ref:* `{{ref}}`  • *Command:* `{{testCommand}}`\n• *Outcome:* success=`{{success}}`  • *Exit code:* `{{exitCode}}`\n• *Totals:* {{totalTests}} tests  • *Passed:* {{passed}}  • *Failed:* {{failed}}  • *Skipped:* {{skipped}}\n• *Pass rate:* {{passRate}}%  • *Duration:* {{duration}}\n• *Summary:* {{summary}}\n----\n_From analyze:_ {{suggestionCount}} suggestion rows  • runners: {{analysisMeta.detectedRunners}}\n_Use workflow run payload for full `failedTests`, `testResults`, and capped `suggestedTestCases` (see `suggestionCount`, `suggestedTestCasesTruncated`)._"
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "analyze-repo" },
+    { "source": "analyze-repo", "target": "run-tests" },
+    { "source": "run-tests", "target": "slack-notify" }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "_wfengine_help": "RECOMMENDED: Run github.repo.analyze before Read files when using smartSelectMode core or all — merged sourceFiles selects paths. Use smartMaxFiles around 10–15 for focused LLM output. For explicit paths only, set smartSelectMode to custom and list targetFiles. This sample uses core + 12; replace owner/repo and ensure paths exist, or add analyze for real selection.",
+  "id": "generate-unit-tests-from-github",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "analyze-repo",
+      "type": "github.repo.analyze",
+      "config": {
+        "owner": "fintelconnect",
+        "repo": "fintel-webcrawler-monorepo",
+        "ref": "main",
+        "focus": "source",
+        "includePackageJson": true
+      }
+    },
+    {
+      "id": "read-github-files",
+      "type": "github.files.read",
+      "config": {
+        "smartSelectMode": "core",
+        "smartMaxFiles": 12,
+        "targetFiles": [],
+        "maxCharsPerFile": 25000,
+        "maxTotalChars": 400000
+      }
+    },
+    {
+      "id": "llm-generate-tests",
+      "type": "llm.generate-unit-tests",
+      "config": {
+        "targetLanguage": "auto",
+        "preferredTestStyle": "auto",
+        "maxGeneratedFiles": 15,
+        "maxSourceFiles": 25,
+        "maxCharsPerSourceFile": 24000,
+        "maxTotalInputChars": 400000,
+        "model": "gpt-4o-mini",
+        "temperature": 0.2
+      }
+    },
+    {
+      "id": "write-test-files",
+      "type": "code.write-test-files",
+      "config": {
+        "baseDirectory": "./generated-tests",
+        "overwrite": true,
+        "createDirectories": true,
+        "dryRun": false
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "analyze-repo" },
+    { "source": "analyze-repo", "target": "read-github-files" },
+    { "source": "read-github-files", "target": "llm-generate-tests" },
+    { "source": "llm-generate-tests", "target": "write-test-files" }
+  ]
+}

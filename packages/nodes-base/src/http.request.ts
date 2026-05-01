@@ -1,0 +1,88 @@
+import type { NodeDefinition } from "@wfengine/core";
+import { z } from "zod";
+import { HttpRequestConfigSchema } from "./config-schemas.js";
+import { redactSecretsDeep } from "./redact-secrets.js";
+
+export { HttpRequestConfigSchema } from "./config-schemas.js";
+
+function sanitizeResponseHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
+  const redactKey =
+    /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)$/i;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    out[k] = redactKey.test(k) ? "[redacted]" : v;
+  }
+  return out;
+}
+
+function assertSafeUrl(urlStr: string): URL {
+  const u = new URL(urlStr);
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new Error(`Unsupported URL protocol: ${u.protocol}`);
+  }
+  return u;
+}
+
+export const httpRequestNode: NodeDefinition = {
+  type: "http.request",
+  label: "HTTP Request",
+  category: "action",
+  configSchema: HttpRequestConfigSchema,
+  execute: async ({ config, context }) => {
+    const c = config as z.infer<typeof HttpRequestConfigSchema>;
+    assertSafeUrl(c.url);
+
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), c.timeoutMs);
+    try {
+      let body: string | undefined;
+      if (c.body !== undefined) {
+        body =
+          typeof c.body === "string"
+            ? c.body
+            : JSON.stringify(c.body);
+      }
+
+      context.logger.info("HTTP request", { url: c.url, method: c.method });
+
+      const res = await fetch(c.url, {
+        method: c.method,
+        headers: {
+          "content-type": "application/json",
+          ...c.headers,
+        },
+        body:
+          c.method !== "GET" && c.method !== "HEAD" ? body : undefined,
+        signal: controller.signal,
+      });
+
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > c.maxBodyBytes) {
+        throw new Error(
+          `Response body exceeds maxBodyBytes (${buf.byteLength} > ${c.maxBodyBytes})`,
+        );
+      }
+
+      const text = new TextDecoder().decode(buf);
+      let parsed: unknown = text;
+      try {
+        parsed = JSON.parse(text) as unknown;
+      } catch {
+        /* leave as string */
+      }
+
+      return {
+        status: res.status,
+        ok: res.ok,
+        headers: sanitizeResponseHeaders(
+          Object.fromEntries(res.headers.entries()),
+        ),
+        body: redactSecretsDeep(parsed),
+      };
+    } finally {
+      clearTimeout(t);
+    }
+  },
+};

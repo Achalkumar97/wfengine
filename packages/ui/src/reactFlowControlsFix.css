@@ -1,0 +1,12 @@
+/* React Flow default control icons are black paths; they disappear on dark toolbars. */
+.wf-turbo-canvas .react-flow__controls-button svg path {
+  fill: #d4d4d8;
+}
+
+.wf-turbo-canvas .react-flow__controls-button:hover svg path {
+  fill: #fafafa;
+}
+
+.wf-turbo-canvas .react-flow__controls-button:disabled svg path {
+  fill: #71717a;
+}

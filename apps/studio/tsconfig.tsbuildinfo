@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/NodeConfigPanel.tsx","./src/RunInspectorPanel.tsx","./src/WorkflowInspectorPanel.tsx","./src/demo-flow.ts","./src/main.tsx","./src/palette-data.ts","./src/palette-icons.tsx","./src/server-api.ts","./src/studio-persistence.ts","./src/vite-env.d.ts"],"version":"5.9.3"}

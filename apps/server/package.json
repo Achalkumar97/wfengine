@@ -1,0 +1,49 @@
+{
+  "name": "@wfengine/server",
+  "version": "0.1.0",
+  "description": "REST API, Postgres persistence, BullMQ execution for wfengine",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "prisma"],
+  "scripts": {
+    "build": "dotenv -e ../../.env -- prisma generate && tsc",
+    "db:generate": "dotenv -e ../../.env -- prisma generate",
+    "db:migrate": "dotenv -e ../../.env -- prisma migrate deploy",
+    "db:push": "dotenv -e ../../.env -- prisma db push",
+    "dev": "dotenv -e ../../.env -- tsx watch src/main.ts",
+    "worker": "dotenv -e ../../.env -- tsx src/worker.ts",
+    "start": "dotenv -e ../../.env -- node dist/main.js",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@fastify/swagger": "^9.4.2",
+    "@fastify/swagger-ui": "^5.2.2",
+    "@fastify/cors": "^10.0.2",
+    "@prisma/client": "^6.2.1",
+    "@wfengine/core": "^0.1.0",
+    "@wfengine/nodes-base": "^0.1.0",
+    "@wfengine/shared": "^0.1.0",
+    "bullmq": "^5.34.5",
+    "fastify": "^5.2.1",
+    "ioredis": "^5.4.2",
+    "node-cron": "^3.0.3",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "dotenv-cli": "^8.0.0",
+    "prisma": "^6.2.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18.18"
+  }
+}

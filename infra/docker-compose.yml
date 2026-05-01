@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: wfengine
+    # Host 5433 avoids conflict when a local PostgreSQL already binds :5432
+    ports:
+      - "5433:5432"
+    volumes:
+      - wfengine_pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    # Host 6380 avoids conflict when a local Redis already binds :6379
+    ports:
+      - "6380:6379"
+
+volumes:
+  wfengine_pg:
