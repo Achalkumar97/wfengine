@@ -1,5 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { cn, type InspectorRenderProps } from "@wfengine/ui";
+import { AgentToolsPicker } from "./AgentToolsPicker.js";
 import {
   CronTriggerConfigSchema,
   EmailReadConfigSchema,
@@ -17,7 +18,24 @@ import {
   PostgresQueryConfigSchema,
   SlackSendFormSchema,
 } from "@wfengine/nodes-base/config-schemas";
-import { Eye, EyeOff } from "lucide-react";
+import {
+  AgentPersonaSchema,
+  AutogenAgentConfigPartialSchema,
+  AutogenAgentConfigSchema,
+  AutogenMultiAgentConfigSchema,
+  MfaAgentGroupConfigSchema,
+  type AgentToolRef,
+} from "@wfengine/nodes-agents/schemas";
+import {
+  AddAgentToolbar,
+  appendBlankPersona,
+  appendPersonaFromLibrary,
+  AutogenMultiOrchestrationHint,
+  MfaOrchestrationModeHint,
+  orchestrationCardClass,
+  SingleAgentRuntimeHint,
+} from "./agent-inspector-ui.js";
+import { Bot, Eye, EyeOff } from "lucide-react";
 import {
   forwardRef,
   useEffect,
@@ -28,6 +46,7 @@ import {
   type ReactElement,
 } from "react";
 import { useForm, useWatch, type FieldValues } from "react-hook-form";
+import { toast } from "sonner";
 import { z } from "zod";
 
 const fieldLabel = (c?: string) =>
@@ -41,6 +60,16 @@ const fieldInput = (c?: string) =>
     c,
   );
 const fieldGroup = (c?: string) => cn("mb-3.5", c);
+
+/** Stop persisting OpenAI URL/key in workflow JSON — runner uses `OPENAI_API_KEY` / `WFENGINE_OPENAI_BASE_URL` (or per-node override only via JSON). */
+function stripOpenAiEnvFromConfig(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...data };
+  delete out.openAiBaseUrl;
+  delete out.openAiApiKey;
+  return out;
+}
 
 /**
  * Password / token field with show-hide toggle.
@@ -101,6 +130,7 @@ function useDebouncedValidConfig<T extends FieldValues>(
   updateNodeConfig: (id: string, config: Record<string, unknown>) => void,
   mergeBase: Record<string, unknown>,
   debounceMs = 200,
+  options?: { stripOpenAiEnv?: boolean },
 ): void {
   const mergeRef = useRef(mergeBase);
   mergeRef.current = mergeBase;
@@ -108,26 +138,45 @@ function useDebouncedValidConfig<T extends FieldValues>(
   useEffect(() => {
     const t = window.setTimeout(() => {
       const base = mergeRef.current;
+      const baseStripped = options?.stripOpenAiEnv
+        ? stripOpenAiEnvFromConfig({ ...base })
+        : { ...base };
       const full = schema.safeParse(watchValues);
       if (full.success) {
-        updateNodeConfig(nodeId, full.data as Record<string, unknown>);
+        let data = full.data as Record<string, unknown>;
+        if (options?.stripOpenAiEnv) {
+          data = stripOpenAiEnvFromConfig(data);
+        }
+        updateNodeConfig(nodeId, data);
         return;
       }
       if (schema instanceof z.ZodObject) {
         const partialResult = schema.partial().safeParse(watchValues);
         if (partialResult.success) {
-          const merged: Record<string, unknown> = { ...base };
+          const merged: Record<string, unknown> = { ...baseStripped };
           for (const [key, val] of Object.entries(partialResult.data)) {
             if (val !== undefined) {
               merged[key] = val;
             }
           }
-          updateNodeConfig(nodeId, merged);
+          updateNodeConfig(
+            nodeId,
+            options?.stripOpenAiEnv
+              ? stripOpenAiEnvFromConfig(merged)
+              : merged,
+          );
         }
       }
     }, debounceMs);
     return () => window.clearTimeout(t);
-  }, [watchValues, schema, nodeId, updateNodeConfig, debounceMs]);
+  }, [
+    watchValues,
+    schema,
+    nodeId,
+    updateNodeConfig,
+    debounceMs,
+    options?.stripOpenAiEnv,
+  ]);
 }
 
 function JsonFallback(props: InspectorRenderProps): ReactElement {
@@ -420,6 +469,10 @@ function EmailSendPanel(props: InspectorRenderProps): ReactElement {
           ["text", "Text body"],
           ["html", "HTML body"],
           ["replyTo", "Reply-To"],
+          [
+            "attachInputContentAsFilename",
+            "Attach merged `content` as file (filename)",
+          ],
         ] as const
       ).map(([key, lab]) => (
         <div key={key} className={fieldGroup()}>
@@ -447,6 +500,25 @@ function EmailSendPanel(props: InspectorRenderProps): ReactElement {
         <label className={fieldLabel("flex items-center gap-2 normal-case tracking-normal text-zinc-300")}>
           <input type="checkbox" {...form.register("secure")} /> Secure (TLS)
         </label>
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel("flex items-center gap-2 normal-case tracking-normal text-zinc-300")}>
+          <input
+            type="checkbox"
+            checked={form.watch("wfengineToolOnly") === true}
+            onChange={(e) => {
+              form.setValue("wfengineToolOnly", e.target.checked, {
+                shouldDirty: true,
+                shouldTouch: true,
+              });
+            }}
+          />{" "}
+          Agent invokes only — not a normal DAG step (see{" "}
+          <code className="text-[10px]">workflow_node</code>)
+        </label>
+        <p className="mt-1 text-[10px] leading-relaxed text-zinc-500">
+          Same graph as always: the LLM calls these nodes as tools. This flag only means “do not run this node as a regular scheduled step” so it is not executed twice. If no agent calls it, the run fails with a clear error. Uncheck for pure linear flows (every node runs in order).
+        </p>
       </div>
     </div>
   );
@@ -719,6 +791,11 @@ function FileWritePanel(props: InspectorRenderProps): ReactElement {
         <label className={fieldLabel()}>Path</label>
         <input {...form.register("path")} className={fieldInput()} />
       </div>
+      <label className={fieldLabel("flex items-center gap-2 normal-case tracking-normal text-zinc-300")}>
+        <input type="checkbox" {...form.register("interpolatePathFromInput")} />{" "}
+        Interpolate path from run data (e.g.{" "}
+        <code className="text-zinc-500">{`reports/out-{{runDate}}.csv`}</code>)
+      </label>
       <div className={fieldGroup()}>
         <label className={fieldLabel()}>Content</label>
         <textarea
@@ -745,6 +822,25 @@ function FileWritePanel(props: InspectorRenderProps): ReactElement {
         <input type="checkbox" {...form.register("createDirs")} /> Create dirs
       </label>
       <div className={fieldGroup()}>
+        <label className={fieldLabel("flex items-center gap-2 normal-case tracking-normal text-zinc-300")}>
+          <input
+            type="checkbox"
+            checked={form.watch("wfengineToolOnly") === true}
+            onChange={(e) => {
+              form.setValue("wfengineToolOnly", e.target.checked, {
+                shouldDirty: true,
+                shouldTouch: true,
+              });
+            }}
+          />{" "}
+          Agent invokes only — not a normal DAG step (see{" "}
+          <code className="text-[10px]">workflow_node</code>)
+        </label>
+        <p className="mt-1 text-[10px] leading-relaxed text-zinc-500">
+          Leave <strong>unchecked</strong> when every step should run in graph order. When checked, the node runs only when an agent dispatches it as a tool (avoids double execution). If it is never invoked, the run fails with an explicit error.
+        </p>
+      </div>
+      <div className={fieldGroup()}>
         <label className={fieldLabel()}>Base dir</label>
         <input {...form.register("baseDir")} className={fieldInput()} />
       </div>
@@ -769,6 +865,8 @@ function LlmGenerateUnitTestsPanel(
     selectedNode.id,
     updateNodeConfig,
     cfg,
+    200,
+    { stripOpenAiEnv: true },
   );
   useEffect(() => {
     form.reset(LlmGenerateUnitTestsConfigSchema.partial().parse(cfg));
@@ -783,17 +881,10 @@ function LlmGenerateUnitTestsPanel(
         <span className="text-zinc-400">github.files.read</span>). Detects language
         per file; use <code className="text-zinc-400">preferredTestStyle</code> to bias
         pytest / Jest / JUnit / etc. Output includes <code className="text-zinc-400">framework</code> per
-        file. Set <code className="text-zinc-400">OPENAI_API_KEY</code> on the runner. Repo identity for
-        the prompt comes from upstream (e.g. Analyze → Read); no separate git fields here.
+        file. LLM access uses <code className="text-zinc-400">OPENAI_API_KEY</code> /{" "}
+        <code className="text-zinc-400">WFENGINE_OPENAI_BASE_URL</code> on the <strong>runner</strong> (not
+        stored in this workflow). Repo identity for the prompt comes from upstream (e.g. Analyze → Read).
       </p>
-      <div className={fieldGroup()}>
-        <label className={fieldLabel()}>OpenAI base URL</label>
-        <input {...form.register("openAiBaseUrl")} className={fieldInput()} />
-      </div>
-      <div className={fieldGroup()}>
-        <label className={fieldLabel()}>OpenAI API key</label>
-        <SecretInput {...form.register("openAiApiKey")} />
-      </div>
       <div className={fieldGroup()}>
         <label className={fieldLabel()}>Model</label>
         <input {...form.register("model")} className={fieldInput()} />
@@ -910,6 +1001,8 @@ function GitHubRepoGenerateTestsLlmPanel(
     selectedNode.id,
     updateNodeConfig,
     cfg,
+    200,
+    { stripOpenAiEnv: true },
   );
   useEffect(() => {
     form.reset(GitHubRepoGenerateTestsLlmConfigSchema.partial().parse(cfg));
@@ -920,10 +1013,9 @@ function GitHubRepoGenerateTestsLlmPanel(
       <p className="mb-2 text-[11px] leading-snug text-zinc-500">
         Chain after <span className="text-zinc-400">GitHub: Analyze repo</span>
         , then to <span className="text-zinc-400">GitHub: Run tests</span>.
-        Requires{" "}
-        <code className="text-zinc-400">OPENAI_API_KEY</code>-style key (or
-        compatible endpoint). Repo fields belong on Analyze — use Advanced only to
-        override.
+        LLM calls use <code className="text-zinc-400">OPENAI_API_KEY</code> /{" "}
+        <code className="text-zinc-400">WFENGINE_OPENAI_BASE_URL</code> on the runner. Repo fields belong on
+        Analyze — use Advanced only to override.
       </p>
       <details className="rounded-md border border-zinc-700/80 bg-zinc-900/40 p-2">
         <summary className="cursor-pointer text-xs font-medium text-zinc-400 select-none">
@@ -948,14 +1040,6 @@ function GitHubRepoGenerateTestsLlmPanel(
           </div>
         </div>
       </details>
-      <div className={fieldGroup()}>
-        <label className={fieldLabel()}>OpenAI base URL</label>
-        <input {...form.register("openAiBaseUrl")} className={fieldInput()} />
-      </div>
-      <div className={fieldGroup()}>
-        <label className={fieldLabel()}>OpenAI API key</label>
-        <SecretInput {...form.register("openAiApiKey")} />
-      </div>
       <div className={fieldGroup()}>
         <label className={fieldLabel()}>Model</label>
         <input {...form.register("model")} className={fieldInput()} />
@@ -1304,6 +1388,695 @@ function GitHubRepoRunTestsPanel(props: InspectorRenderProps): ReactElement {
   );
 }
 
+const DEFAULT_MFA_AGENTS = [
+  {
+    name: "researcher",
+    systemPrompt:
+      "Read the upstream workflow JSON and summarize facts relevant to the task.",
+  },
+  {
+    name: "reviewer",
+    systemPrompt:
+      "Critique the researcher’s summary and note risks or missing checks.",
+  },
+];
+
+const DEFAULT_MULTI_AGENTS = [
+  {
+    name: "planner",
+    systemPrompt: "Propose a short plan based on the upstream payload.",
+  },
+  {
+    name: "executor",
+    systemPrompt: "Turn the plan into concrete actionable steps.",
+  },
+];
+
+function MfaAgentGroupPanel(props: InspectorRenderProps): ReactElement {
+  const { selectedNode, updateNodeConfig } = props;
+  if (!selectedNode) return <></>;
+  const cfg = selectedNode.data.config ?? {};
+  const parsed = MfaAgentGroupConfigSchema.partial().safeParse(cfg);
+
+  const form = useForm({
+    defaultValues: {
+      groupName: parsed.success ? (parsed.data.groupName ?? "") : "",
+      orchestrationMode:
+        (parsed.success ? parsed.data.orchestrationMode : undefined) ??
+        "sequential",
+      model: parsed.success ? (parsed.data.model ?? "gpt-4o-mini") : "gpt-4o-mini",
+      temperature: parsed.success ? (parsed.data.temperature ?? 0.3) : 0.3,
+      timeoutMs: parsed.success ? (parsed.data.timeoutMs ?? 180_000) : 180_000,
+      taskInstructions: parsed.success
+        ? (parsed.data.taskInstructions ?? "")
+        : "",
+    },
+  });
+
+  const [agentsJson, setAgentsJson] = useState(() =>
+    JSON.stringify(
+      parsed.success && parsed.data.agents?.length
+        ? parsed.data.agents
+        : DEFAULT_MFA_AGENTS,
+      null,
+      2,
+    ),
+  );
+
+  const vals = useWatch({ control: form.control });
+
+  useEffect(() => {
+    const p = MfaAgentGroupConfigSchema.partial().safeParse(cfg);
+    const agents =
+      p.success && p.data.agents?.length ? p.data.agents : DEFAULT_MFA_AGENTS;
+    setAgentsJson(JSON.stringify(agents, null, 2));
+    form.reset({
+      groupName: p.success ? (p.data.groupName ?? "") : "",
+      orchestrationMode:
+        (p.success ? p.data.orchestrationMode : undefined) ?? "sequential",
+      model: p.success ? (p.data.model ?? "gpt-4o-mini") : "gpt-4o-mini",
+      temperature: p.success ? (p.data.temperature ?? 0.3) : 0.3,
+      timeoutMs: p.success ? (p.data.timeoutMs ?? 180_000) : 180_000,
+      taskInstructions: p.success ? (p.data.taskInstructions ?? "") : "",
+    });
+  }, [selectedNode.id, cfg, form]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      let raw: unknown;
+      try {
+        raw = JSON.parse(agentsJson);
+      } catch {
+        return;
+      }
+      const agents = z.array(AgentPersonaSchema).safeParse(raw);
+      if (!agents.success) return;
+      const merged = {
+        ...(vals ?? {}),
+        agents: agents.data,
+      };
+      const full = MfaAgentGroupConfigSchema.safeParse(merged);
+      if (full.success) {
+        updateNodeConfig(
+          selectedNode.id,
+          stripOpenAiEnvFromConfig(full.data as Record<string, unknown>),
+        );
+      }
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [agentsJson, vals, selectedNode.id, updateNodeConfig]);
+
+  const orchestrationMode = vals?.orchestrationMode ?? "sequential";
+
+  const pushAgentsJson = (next: string) => {
+    setAgentsJson(next);
+  };
+
+  return (
+    <div className="mt-2 space-y-4">
+      <p className="text-[11px] leading-snug text-zinc-500">
+        OpenAI-compatible API on the <strong>runner</strong>. Upstream outputs are merged into JSON
+        context for every turn.
+      </p>
+
+      <div className={orchestrationCardClass}>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/85">
+          Orchestration mode
+        </p>
+        <select
+          {...form.register("orchestrationMode")}
+          className={cn(fieldInput(), "mt-2")}
+        >
+          <option value="sequential">Sequential — each agent once in order</option>
+          <option value="single_completion">Single JSON completion — one API call</option>
+        </select>
+        <MfaOrchestrationModeHint mode={orchestrationMode} />
+      </div>
+
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Add agents</label>
+        <p className="mb-2 text-[10px] leading-snug text-zinc-500">
+          The agent list lives on the canvas node — edit, delete, or reorder there. Use these shortcuts or Advanced JSON.
+        </p>
+        <AddAgentToolbar
+          libraryEntries={props.agentLibraryEntries}
+          onPickLibraryEntry={(entry) =>
+            pushAgentsJson(appendPersonaFromLibrary(agentsJson, entry))
+          }
+          onAddBlank={() => pushAgentsJson(appendBlankPersona(agentsJson))}
+          onOpenAgentLibrary={props.onOpenAgentLibrary}
+        />
+      </div>
+
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Group name (optional)</label>
+        <input {...form.register("groupName")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Model (shared)</label>
+        <input {...form.register("model")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Temperature</label>
+        <input type="number" step="0.1" {...form.register("temperature")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Timeout (ms)</label>
+        <input type="number" {...form.register("timeoutMs")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Extra task instructions</label>
+        <textarea {...form.register("taskInstructions")} rows={3} className={fieldInput("min-h-[56px] text-xs")} />
+      </div>
+
+      <details className="rounded-xl border border-white/[0.06] bg-[#14141a] px-3 py-2">
+        <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+          Advanced — personas JSON
+        </summary>
+        <p className="mb-2 mt-2 text-[10px] leading-snug text-zinc-500">
+          Edit raw persona objects when you need full control. With <code className="text-zinc-400">libraryAgentId</code>,{" "}
+          <code className="text-zinc-400">systemPrompt</code> may be omitted.
+        </p>
+        <textarea
+          value={agentsJson}
+          onChange={(e) => setAgentsJson(e.target.value)}
+          rows={10}
+          spellCheck={false}
+          className={fieldInput("min-h-[140px] font-mono text-xs")}
+        />
+      </details>
+    </div>
+  );
+}
+
+/** Single-agent nodes must not use `agents[]`; normalize invalid pasted JSON. */
+function sanitizeAutogenSingleAgentConfig(c: Record<string, unknown>): {
+  next: Record<string, unknown>;
+  hadMultiplePersonas: boolean;
+} {
+  const agents = c.agents;
+  if (!Array.isArray(agents)) {
+    return { next: { ...c }, hadMultiplePersonas: false };
+  }
+  if (agents.length === 0) {
+    const next = { ...c };
+    delete next.agents;
+    return { next, hadMultiplePersonas: false };
+  }
+  const hadMultiplePersonas = agents.length > 1;
+  const next: Record<string, unknown> = { ...c };
+  delete next.agents;
+  const first = agents[0];
+  if (first && typeof first === "object" && !Array.isArray(first)) {
+    const o = first as Record<string, unknown>;
+    if (typeof o.name === "string" && o.name.trim()) next.agentName = o.name;
+    if (typeof o.systemPrompt === "string") next.systemPrompt = o.systemPrompt;
+    if (typeof o.libraryAgentId === "string")
+      next.libraryAgentId = o.libraryAgentId;
+  }
+  return { next, hadMultiplePersonas };
+}
+
+function AutogenAgentPanel(props: InspectorRenderProps): ReactElement {
+  const { selectedNode, updateNodeConfig } = props;
+  if (!selectedNode) return <></>;
+  const cfg = selectedNode.data.config ?? {};
+  const [showMultiAgentFixBanner, setShowMultiAgentFixBanner] = useState(false);
+
+  const form = useForm({
+    resolver: zodResolver(AutogenAgentConfigSchema),
+    defaultValues: AutogenAgentConfigPartialSchema.parse(cfg),
+  });
+  const vals = useWatch({ control: form.control });
+  useDebouncedValidConfig(
+    vals ?? {},
+    AutogenAgentConfigSchema,
+    selectedNode.id,
+    updateNodeConfig,
+    cfg,
+    200,
+    { stripOpenAiEnv: true },
+  );
+  useEffect(() => {
+    setShowMultiAgentFixBanner(false);
+  }, [selectedNode.id]);
+
+  useEffect(() => {
+    const raw = (selectedNode.data.config ?? {}) as Record<string, unknown>;
+    if (!Array.isArray(raw.agents)) return;
+    const { next, hadMultiplePersonas } = sanitizeAutogenSingleAgentConfig(raw);
+    if (hadMultiplePersonas) {
+      setShowMultiAgentFixBanner(true);
+      toast.warning(
+        "This step only supports one agent. Extra personas were removed; the first was kept.",
+      );
+    }
+    updateNodeConfig(selectedNode.id, next);
+  }, [selectedNode.id, selectedNode.data.config, updateNodeConfig]);
+
+  useEffect(() => {
+    form.reset(AutogenAgentConfigPartialSchema.parse(cfg));
+  }, [selectedNode.id, cfg, form]);
+
+  const runtimeVal = (vals?.runtime as string | undefined) ?? "openai_compatible";
+  const libraryAgentId = vals?.libraryAgentId as string | undefined;
+
+  return (
+    <div className="mt-2 space-y-4">
+      <div className="flex items-start gap-3 rounded-xl border border-cyan-500/30 bg-gradient-to-br from-cyan-950/50 to-[#14141a] px-3 py-3 ring-1 ring-cyan-500/15">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-500/20 text-cyan-200 ring-1 ring-cyan-400/30">
+          <Bot className="h-5 w-5" aria-hidden />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-200/95">
+            Single Agent
+          </p>
+          <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">
+            One LLM per run. API key on the runner (
+            <code className="text-zinc-400">OPENAI_API_KEY</code>).
+          </p>
+        </div>
+      </div>
+
+      {showMultiAgentFixBanner ? (
+        <div className="rounded-xl border border-amber-500/35 bg-amber-950/30 px-3 py-2.5 text-[12px] leading-snug text-amber-100/95">
+          <span className="font-medium text-amber-50">Invalid config:</span> an{" "}
+          <code className="rounded bg-black/30 px-1 text-[11px]">agents</code> list was
+          found; only the first entry was kept for this single-agent step.
+          <button
+            type="button"
+            className="ml-2 text-amber-200/90 underline decoration-amber-500/50 hover:text-white"
+            onClick={() => setShowMultiAgentFixBanner(false)}
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      <div className="rounded-xl border border-cyan-500/20 bg-cyan-950/20 px-3 py-2.5">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-200/80">
+          Runtime
+        </p>
+        <select {...form.register("runtime")} className={cn(fieldInput(), "mt-2")}>
+          <option value="openai_compatible">OpenAI-compatible (Node)</option>
+          <option value="python_autogen">Python AutoGen bridge</option>
+        </select>
+        <SingleAgentRuntimeHint runtime={runtimeVal} />
+      </div>
+
+      <input type="hidden" {...form.register("libraryAgentId")} />
+
+      {libraryAgentId ? (
+        <div className="rounded-xl border border-white/[0.08] bg-[#16161e] px-3 py-2.5">
+          <p className="text-[11px] leading-snug text-zinc-400">
+            <span className="font-medium text-zinc-300">Agent Library</span> —{" "}
+            <span className="font-mono text-cyan-300/90">{libraryAgentId}</span>
+          </p>
+          <button
+            type="button"
+            className="mt-2 text-[11px] font-medium text-cyan-300/90 underline decoration-cyan-500/40 hover:text-cyan-200"
+            onClick={() => {
+              form.setValue("libraryAgentId", undefined, { shouldDirty: true });
+            }}
+          >
+            Detach and use inline fields only
+          </button>
+        </div>
+      ) : null}
+
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Agent name</label>
+        <input {...form.register("agentName")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Model</label>
+        <input {...form.register("model")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>System prompt</label>
+        <textarea {...form.register("systemPrompt")} rows={5} className={fieldInput("min-h-[80px] text-xs")} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className={fieldGroup("mb-0")}>
+          <label className={fieldLabel()}>Temperature</label>
+          <input type="number" step="0.1" {...form.register("temperature")} className={fieldInput()} />
+        </div>
+        <div className={fieldGroup("mb-0")}>
+          <label className={fieldLabel()}>Timeout (ms)</label>
+          <input type="number" {...form.register("timeoutMs")} className={fieldInput()} />
+        </div>
+      </div>
+
+      <details className="rounded-xl border border-white/[0.06] bg-[#14141a] px-3 py-2">
+        <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+          Advanced — tools & Python bridge
+        </summary>
+        <div className="mt-3 space-y-3">
+          <div className={fieldGroup("mb-0")}>
+            <label className={fieldLabel()}>Tools</label>
+            <AgentToolsPicker
+              tools={vals?.tools as AgentToolRef[] | undefined}
+              onChange={(next) =>
+                form.setValue("tools", next, { shouldDirty: true })
+              }
+              workflowNodes={props.workflowNodes}
+              excludeNodeIds={[selectedNode.id]}
+              agentLibraryEntries={props.agentLibraryEntries ?? []}
+            />
+          </div>
+          <div className={fieldGroup("mb-0")}>
+            <label className={fieldLabel()}>Python executable</label>
+            <input {...form.register("pythonExecutable")} className={fieldInput()} placeholder="python3" />
+          </div>
+          <div className={fieldGroup("mb-0")}>
+            <label className={fieldLabel()}>Python module path</label>
+            <input {...form.register("pythonModulePath")} className={fieldInput()} placeholder="my_pkg.autogen_runner" />
+          </div>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function formatForceToolsIndicesForForm(raw: unknown): string {
+  if (!Array.isArray(raw) || !raw.every((x) => typeof x === "number")) {
+    return "";
+  }
+  return (raw as number[]).join(", ");
+}
+
+type AutogenMultiAgentFormVals = {
+  teamName: string;
+  model: string;
+  temperature: number;
+  timeoutMs: number;
+  maxTurns: number;
+  taskInstructions: string;
+  runtime: "orchestrated_openai" | "python_autogen";
+  pythonExecutable: string;
+  pythonModulePath: string;
+  tools: AgentToolRef[];
+  stopMode: "max_turns" | "termination_token";
+  multiAgentToolBinding:
+    | ""
+    | "openai_tools_auto"
+    | "pipeline_last_turn_tools_required";
+  forceToolsOnTurns: string;
+};
+
+function toolBindingFromCfg(
+  raw: unknown,
+): "" | "openai_tools_auto" | "pipeline_last_turn_tools_required" {
+  if (raw === "pipeline_last_turn_tools_required") {
+    return "pipeline_last_turn_tools_required";
+  }
+  if (raw === "openai_tools_auto") {
+    return "openai_tools_auto";
+  }
+  return "";
+}
+
+function AutogenMultiAgentPanel(props: InspectorRenderProps): ReactElement {
+  const { selectedNode, updateNodeConfig } = props;
+  if (!selectedNode) return <></>;
+  const cfg = selectedNode.data.config ?? {};
+  const cfgRec = cfg as Record<string, unknown>;
+  const parsed = AutogenMultiAgentConfigSchema.partial().safeParse(cfg);
+
+  const form = useForm<AutogenMultiAgentFormVals>({
+    defaultValues: {
+      teamName: parsed.success ? (parsed.data.teamName ?? "") : "",
+      model: parsed.success ? (parsed.data.model ?? "gpt-4o-mini") : "gpt-4o-mini",
+      temperature: parsed.success ? (parsed.data.temperature ?? 0.3) : 0.3,
+      timeoutMs: parsed.success ? (parsed.data.timeoutMs ?? 240_000) : 240_000,
+      maxTurns: parsed.success ? (parsed.data.maxTurns ?? 8) : 8,
+      taskInstructions: parsed.success ? (parsed.data.taskInstructions ?? "") : "",
+      runtime:
+        (parsed.success ? parsed.data.runtime : undefined) ??
+        "orchestrated_openai",
+      pythonExecutable: parsed.success
+        ? (parsed.data.pythonExecutable ?? "")
+        : "",
+      pythonModulePath: parsed.success
+        ? (parsed.data.pythonModulePath ?? "")
+        : "",
+      tools: parsed.success ? (parsed.data.tools ?? []) : [],
+      stopMode: parsed.success
+        ? (parsed.data.stopMode ?? "max_turns")
+        : "max_turns",
+      multiAgentToolBinding: toolBindingFromCfg(
+        cfgRec["multiAgentToolBinding"],
+      ),
+      forceToolsOnTurns: formatForceToolsIndicesForForm(
+        cfgRec["forceToolsFirstCompletionOnTurnIndices"],
+      ),
+    },
+  });
+
+  const [agentsJson, setAgentsJson] = useState(() =>
+    JSON.stringify(
+      parsed.success && parsed.data.agents && parsed.data.agents.length >= 2
+        ? parsed.data.agents
+        : DEFAULT_MULTI_AGENTS,
+      null,
+      2,
+    ),
+  );
+
+  const vals = useWatch({ control: form.control });
+
+  useEffect(() => {
+    const p = AutogenMultiAgentConfigSchema.partial().safeParse(cfg);
+    const agents =
+      p.success && p.data.agents && p.data.agents.length >= 2
+        ? p.data.agents
+        : DEFAULT_MULTI_AGENTS;
+    setAgentsJson(JSON.stringify(agents, null, 2));
+    const nextCfg = cfg as Record<string, unknown>;
+    form.reset({
+      teamName: p.success ? (p.data.teamName ?? "") : "",
+      model: p.success ? (p.data.model ?? "gpt-4o-mini") : "gpt-4o-mini",
+      temperature: p.success ? (p.data.temperature ?? 0.3) : 0.3,
+      timeoutMs: p.success ? (p.data.timeoutMs ?? 240_000) : 240_000,
+      maxTurns: p.success ? (p.data.maxTurns ?? 8) : 8,
+      taskInstructions: p.success ? (p.data.taskInstructions ?? "") : "",
+      runtime:
+        (p.success ? p.data.runtime : undefined) ?? "orchestrated_openai",
+      pythonExecutable: p.success ? (p.data.pythonExecutable ?? "") : "",
+      pythonModulePath: p.success ? (p.data.pythonModulePath ?? "") : "",
+      tools: p.success ? (p.data.tools ?? []) : [],
+      stopMode: p.success ? (p.data.stopMode ?? "max_turns") : "max_turns",
+      multiAgentToolBinding: toolBindingFromCfg(
+        nextCfg["multiAgentToolBinding"],
+      ),
+      forceToolsOnTurns: formatForceToolsIndicesForForm(
+        nextCfg["forceToolsFirstCompletionOnTurnIndices"],
+      ),
+    });
+  }, [selectedNode.id, cfg, form]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      let raw: unknown;
+      try {
+        raw = JSON.parse(agentsJson);
+      } catch {
+        return;
+      }
+      const agents = z.array(AgentPersonaSchema).safeParse(raw);
+      if (!agents.success || agents.data.length < 2) return;
+      const v = (vals ?? {}) as Record<string, unknown>;
+      const ftsRaw =
+        typeof v.forceToolsOnTurns === "string" ? v.forceToolsOnTurns.trim() : "";
+      const forceToolsFirstCompletionOnTurnIndices =
+        ftsRaw.length > 0
+          ? ftsRaw
+              .split(/[,;\s]+/)
+              .map((s) => Number.parseInt(s.trim(), 10))
+              .filter((n) => Number.isFinite(n) && n >= 0)
+          : undefined;
+      const {
+        forceToolsOnTurns: _drop,
+        multiAgentToolBinding: mbRaw,
+        ...restVals
+      } = v;
+      const merged: Record<string, unknown> = {
+        ...restVals,
+        agents: agents.data,
+      };
+      if (
+        mbRaw === "openai_tools_auto" ||
+        mbRaw === "pipeline_last_turn_tools_required"
+      ) {
+        merged.multiAgentToolBinding = mbRaw;
+      }
+      if (forceToolsFirstCompletionOnTurnIndices?.length) {
+        merged.forceToolsFirstCompletionOnTurnIndices =
+          forceToolsFirstCompletionOnTurnIndices;
+      }
+      const full = AutogenMultiAgentConfigSchema.safeParse(merged);
+      if (full.success) {
+        updateNodeConfig(
+          selectedNode.id,
+          stripOpenAiEnvFromConfig(full.data as Record<string, unknown>),
+        );
+      }
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [agentsJson, vals, selectedNode.id, updateNodeConfig]);
+
+  const rt = vals?.runtime ?? "orchestrated_openai";
+  const maxTurnsVal = vals?.maxTurns ?? 8;
+
+  const pushAgentsJson = (next: string) => {
+    setAgentsJson(next);
+  };
+
+  return (
+    <div className="mt-2 space-y-4">
+      <p className="text-[11px] leading-snug text-zinc-500">
+        Needs <strong>at least two</strong> agents. Round-robin alternates personas up to max turns, or use the Python bridge.
+      </p>
+
+      <div className={orchestrationCardClass}>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/85">
+          Orchestration
+        </p>
+        <div className="mt-2 grid gap-3 sm:grid-cols-2">
+          <div className={fieldGroup("mb-0")}>
+            <label className={fieldLabel()}>Runtime</label>
+            <select {...form.register("runtime")} className={fieldInput()}>
+              <option value="orchestrated_openai">Round-robin (Node)</option>
+              <option value="python_autogen">Python AutoGen bridge</option>
+            </select>
+          </div>
+          <div className={fieldGroup("mb-0")}>
+            <label className={fieldLabel()}>Max turns</label>
+            <input type="number" {...form.register("maxTurns")} className={fieldInput()} />
+          </div>
+        </div>
+        <AutogenMultiOrchestrationHint runtime={rt} maxTurns={maxTurnsVal} />
+      </div>
+
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Add agents</label>
+        <p className="mb-2 text-[10px] leading-snug text-zinc-500">
+          The team roster is shown on the canvas node (≥2 agents). Use shortcuts below or Advanced JSON.
+        </p>
+        <AddAgentToolbar
+          libraryEntries={props.agentLibraryEntries}
+          onPickLibraryEntry={(entry) =>
+            pushAgentsJson(appendPersonaFromLibrary(agentsJson, entry))
+          }
+          onAddBlank={() => pushAgentsJson(appendBlankPersona(agentsJson))}
+          onOpenAgentLibrary={props.onOpenAgentLibrary}
+        />
+      </div>
+
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Team name</label>
+        <input {...form.register("teamName")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Shared tools</label>
+        <AgentToolsPicker
+          tools={vals?.tools as AgentToolRef[] | undefined}
+          onChange={(next) =>
+            form.setValue("tools", next, { shouldDirty: true })
+          }
+          workflowNodes={props.workflowNodes}
+          excludeNodeIds={[selectedNode.id]}
+          agentLibraryEntries={props.agentLibraryEntries ?? []}
+        />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Tool binding (gen-AI vs pipeline)</label>
+        <p className="mb-1.5 text-[10px] leading-snug text-zinc-500">
+          <strong>OpenAI auto</strong>: model may reply with text and never call workflow tools (then
+          agent-invoke-only graph steps fail with an explicit error). <strong>Pipeline last turn</strong>: when max turns equals team size,
+          the last turn must start with a tool call (<code className="text-zinc-400">tool_choice: required</code>
+          first completion).
+        </p>
+        <select
+          {...form.register("multiAgentToolBinding")}
+          className={fieldInput()}
+        >
+          <option value="">
+            Auto — infer when tools target agent-invoke-only nodes & maxTurns = team size
+          </option>
+          <option value="openai_tools_auto">OpenAI — tools optional (auto)</option>
+          <option value="pipeline_last_turn_tools_required">
+            Pipeline — require tools on last turn (maxTurns = agent count)
+          </option>
+        </select>
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Force tools on turns (optional)</label>
+        <p className="mb-1.5 text-[10px] leading-snug text-zinc-500">
+          Comma-separated <strong>0-based</strong> round-robin indices (e.g.{" "}
+          <code className="text-zinc-400">2</code> for the 3rd agent). First API
+          response on those turns uses <code className="text-zinc-400">tool_choice: required</code>{" "}
+          so the model must call at least one workflow tool.
+        </p>
+        <input
+          {...form.register("forceToolsOnTurns")}
+          className={fieldInput()}
+          placeholder="e.g. 2"
+          spellCheck={false}
+        />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Task instructions</label>
+        <textarea {...form.register("taskInstructions")} rows={2} className={fieldInput("text-xs")} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Stop mode</label>
+        <select {...form.register("stopMode")} className={fieldInput()}>
+          <option value="max_turns">Max turns (default)</option>
+          <option value="termination_token">Termination token (Phase 2)</option>
+        </select>
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Python executable</label>
+        <input {...form.register("pythonExecutable")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Python module path</label>
+        <input {...form.register("pythonModulePath")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Model (shared)</label>
+        <input {...form.register("model")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Temperature</label>
+        <input type="number" step="0.1" {...form.register("temperature")} className={fieldInput()} />
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Timeout (ms)</label>
+        <input type="number" {...form.register("timeoutMs")} className={fieldInput()} />
+      </div>
+
+      <details className="rounded-xl border border-white/[0.06] bg-[#14141a] px-3 py-2">
+        <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+          Advanced — team personas JSON
+        </summary>
+        <p className="mb-2 mt-2 text-[10px] leading-snug text-zinc-500">
+          Raw persona array. Requires ≥2 agents. With <code className="text-zinc-400">libraryAgentId</code>,{" "}
+          <code className="text-zinc-400">systemPrompt</code> may be omitted.
+        </p>
+        <textarea
+          value={agentsJson}
+          onChange={(e) => setAgentsJson(e.target.value)}
+          rows={10}
+          spellCheck={false}
+          className={fieldInput("min-h-[140px] font-mono text-xs")}
+        />
+      </details>
+    </div>
+  );
+}
+
 /**
  * Structured editors backed by the same Zod schemas as `@wfengine/nodes-base`.
  * Unknown types fall back to JSON.
@@ -1371,6 +2144,20 @@ export function NodeConfigPanel(props: InspectorRenderProps): ReactElement {
       );
     case "github.repo.run-tests":
       return <GitHubRepoRunTestsPanel {...props} />;
+    case "mfa.agent-group":
+      return <MfaAgentGroupPanel {...props} />;
+    case "autogen.agent":
+      return selectedNode ? (
+        <AutogenAgentPanel key={selectedNode.id} {...props} />
+      ) : (
+        <></>
+      );
+    case "autogen.multi-agent":
+      return selectedNode ? (
+        <AutogenMultiAgentPanel key={selectedNode.id} {...props} />
+      ) : (
+        <></>
+      );
     default:
       return <JsonFallback {...props} />;
   }

@@ -128,4 +128,28 @@ export const STUDIO_PALETTE: PaletteNodeMeta[] = [
       "Clone (or local path) and run an allowlisted test command with parsed results.",
     icon: "test-tube",
   },
+  {
+    type: "mfa.agent-group",
+    label: "MAF: Agent group",
+    category: "AI Agents",
+    description:
+      "Microsoft Agent Framework–style multi-agent group over upstream JSON (OpenAI-compatible API).",
+    icon: "users-round",
+  },
+  {
+    type: "autogen.agent",
+    label: "AutoGen: Single agent",
+    category: "AI Agents",
+    description:
+      "One AutoGen-style agent step — chat completion or optional Python AutoGen bridge.",
+    icon: "bot",
+  },
+  {
+    type: "autogen.multi-agent",
+    label: "AutoGen: Multi-agent",
+    category: "AI Agents",
+    description:
+      "Several agents with round-robin turns, or delegate to Python AutoGen.",
+    icon: "network",
+  },
 ];

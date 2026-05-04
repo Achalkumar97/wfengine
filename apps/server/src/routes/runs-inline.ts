@@ -13,16 +13,22 @@ export async function registerRunsInlineRoutes(
 ): Promise<void> {
   app.post("/runs/inline", async (request, reply) => {
     const body = RunInlineDefinitionBodySchema.parse(request.body);
+    const execOpts =
+      body.agentLibrary !== undefined
+        ? { variables: { agentLibrary: body.agentLibrary } }
+        : {};
     const result = body.singleNodeRun
       ? await engine.executeSingleNode(
           body.definition,
           body.singleNodeRun.nodeId,
           body.singleNodeRun.seedOutputs,
           body.initialData ?? undefined,
+          execOpts,
         )
       : await engine.execute(
           body.definition,
           body.initialData ?? undefined,
+          execOpts,
         );
     reply.send(result);
   });
@@ -69,6 +75,14 @@ export async function registerRunsInlineRoutes(
       );
     };
 
+    const execOpts = {
+      executionId,
+      onNodeProgress: writeProgress,
+      ...(body.agentLibrary !== undefined
+        ? { variables: { agentLibrary: body.agentLibrary } }
+        : {}),
+    };
+
     const pump = async () => {
       try {
         const result = body.singleNodeRun
@@ -77,12 +91,12 @@ export async function registerRunsInlineRoutes(
               body.singleNodeRun.nodeId,
               body.singleNodeRun.seedOutputs,
               body.initialData ?? undefined,
-              { executionId, onNodeProgress: writeProgress },
+              execOpts,
             )
           : await engine.execute(
               body.definition,
               body.initialData ?? undefined,
-              { executionId, onNodeProgress: writeProgress },
+              execOpts,
             );
         stream.write(
           JSON.stringify({ type: "run_finished" as const, result }) + "\n",

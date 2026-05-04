@@ -1,6 +1,14 @@
 import type { z } from "zod";
 import type { WorkflowDefinition } from "@wfengine/shared";
 
+/** Nested `workflow_node` tool execution (see {@link WorkflowEngine}) */
+export interface AgentToolDispatch {
+  executeWorkflowNode: (
+    targetNodeId: string,
+    args?: Record<string, unknown>,
+  ) => Promise<unknown>;
+}
+
 /**
  * Logger available to node `execute` handlers (structured, child scopes).
  */
@@ -41,6 +49,10 @@ export interface ExecuteParams<TConfig = Record<string, unknown>> {
   context: WorkflowExecutionContext;
   /** 1-based attempt number */
   attempt: number;
+  /**
+   * Wired by {@link WorkflowEngine} so agent nodes can run `workflow_node` tools during an LLM loop.
+   */
+  agentToolDispatch?: AgentToolDispatch | undefined;
 }
 
 export type NodeCategory = "trigger" | "action" | "logic";

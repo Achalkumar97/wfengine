@@ -85,3 +85,43 @@ export function collectAncestorIds(
   }
   return [...seen];
 }
+
+/**
+ * Every node reachable from `sourceNodeId` by following edges (any depth) whose
+ * {@link WorkflowNode.config} has `wfengineToolOnly: true` — nodes meant to run only when an agent
+ * dispatches them as `workflow_node` tools (not as duplicate linear steps).
+ *
+ * @remarks Walker order matches edge declaration order; uses adjacency maps for O(edges) traversal.
+ */
+export function directDownstreamToolOnlyNodeIds(
+  workflow: WorkflowDefinition,
+  sourceNodeId: string,
+): string[] {
+  const nodeById = new Map(workflow.nodes.map((n) => [n.id, n]));
+  const outgoing = new Map<string, string[]>();
+  for (const e of workflow.edges) {
+    if (!outgoing.has(e.source)) outgoing.set(e.source, []);
+    outgoing.get(e.source)!.push(e.target);
+  }
+
+  const matched: string[] = [];
+  const queue: string[] = [...(outgoing.get(sourceNodeId) ?? [])];
+  const seen = new Set<string>();
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+
+    const n = nodeById.get(id);
+    const cfg = (n?.config ?? {}) as Record<string, unknown>;
+    if (cfg.wfengineToolOnly === true) {
+      matched.push(id);
+    }
+    for (const targetId of outgoing.get(id) ?? []) {
+      queue.push(targetId);
+    }
+  }
+
+  return matched;
+}

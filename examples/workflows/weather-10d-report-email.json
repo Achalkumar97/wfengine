@@ -1,0 +1,108 @@
+{
+  "id": "weather-10d-report-email",
+  "version": 1,
+  "_readme": [
+    "=== 10-day weather → CSV on disk → email client (real SMTP) ===",
+    "Flow: Open-Meteo (free, no key) → LLM builds CSV → file.write → file.read → LLM drafts email body → email.send with CSV attached.",
+    "Alternative: autogen.multi-agent with tool calls only on the last turn — see weather-10d-mfa-team.json (gym-style; tool email nodes stay tool-only on purpose).",
+    "",
+    "Runner needs: OPENAI_API_KEY or WFENGINE_OPENAI_API_KEY; outbound HTTPS to api.open-meteo.com; SMTP (e.g. Gmail app password on email node).",
+    "Replace email.send authPass with your app password; set `to` / `from` as needed.",
+    "",
+    "Open-Meteo `past_days` returns recent days from the forecast API (model-based archive). Location: edit fetch-weather URL latitude/longitude.",
+    "file.write / file.read use fixed path reports/weather-10d-latest.csv (last run overwrites).",
+    "",
+    "email.send uses attachInputContentAsFilename so merged input `content` from file.read becomes the attachment; body text comes from autogen `output`.",
+    "",
+    "This workflow is 100% LINEAR DAG (no autogen.multi-agent) — maxTurns / multiAgentToolBinding do NOT exist here; they only apply to multi-agent team nodes (see weather-10d-mfa-team.json).",
+    "If write-csv or send-report fails with agent-invoke-only / wfengineToolOnly in the message: that means wfengineToolOnly is true (e.g. leftover from an MFA import). In Inspector, clear \"Agent invokes only\" on File write and Send email, or remove wfengineToolOnly from JSON. The engine never infers this flag from edges."
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "fetch-weather",
+      "type": "http.request",
+      "config": {
+        "url": "https://api.open-meteo.com/v1/forecast?latitude=19.076&longitude=72.8777&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto&past_days=10",
+        "method": "GET",
+        "timeoutMs": 30000
+      }
+    },
+    {
+      "id": "build-csv",
+      "type": "autogen.agent",
+      "config": {
+        "agentName": "csv_builder",
+        "model": "gpt-4o-mini",
+        "temperature": 0.1,
+        "timeoutMs": 120000,
+        "runtime": "openai_compatible",
+        "systemPrompt": "You convert Open-Meteo JSON into a compact CSV only.\n\nThe user message contains merged workflow JSON. Find HTTP result `body` with `daily` (Open-Meteo v1 forecast shape): arrays `time`, `temperature_2m_max`, `temperature_2m_min`, `precipitation_sum` (same length).\n\nOutput **only** RFC 4180 CSV text: header row\ndate,temp_max_c,temp_min_c,precip_mm\nThen one data row per index. Dates exactly as given in `daily.time`. Numbers plain (no units in cells). If data is missing or request failed, output a one-line CSV header plus one row with ERROR and a short reason. No markdown fences, no commentary."
+      }
+    },
+    {
+      "id": "write-csv",
+      "type": "file.write",
+      "config": {
+        "wfengineToolOnly": false,
+        "path": "reports/weather-10d-latest.csv",
+        "content": "{{output}}",
+        "interpolateContentFromInput": true,
+        "encoding": "utf8",
+        "append": false,
+        "createDirs": true
+      }
+    },
+    {
+      "id": "read-csv",
+      "type": "file.read",
+      "config": {
+        "path": "reports/weather-10d-latest.csv",
+        "encoding": "utf8",
+        "maxBytes": 500000
+      }
+    },
+    {
+      "id": "email-draft",
+      "type": "autogen.agent",
+      "config": {
+        "agentName": "client_email",
+        "model": "gpt-4o-mini",
+        "temperature": 0.35,
+        "timeoutMs": 120000,
+        "runtime": "openai_compatible",
+        "systemPrompt": "You write concise client-facing email **body** text (plain English, no subject line).\n\nThe user message includes merged JSON with `content` holding a UTF-8 CSV of daily weather (last ~10 days). Summarize trends (warmest/coldest days, rain), recommend gym vs outdoor caution in 2–4 short paragraphs. Close with one line: figures from Open-Meteo; not a substitute for official alerts. Do not paste the full CSV into the email."
+      }
+    },
+    {
+      "id": "send-report",
+      "type": "email.send",
+      "config": {
+        "wfengineToolOnly": false,
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "secure": false,
+        "authUser": "you@example.com",
+        "authPass": "PASTE_GMAIL_APP_PASSWORD",
+        "from": "you@example.com",
+        "to": "client@example.com",
+        "subject": "10-day weather summary (CSV attached)",
+        "text": ".",
+        "attachInputContentAsFilename": "weather-last-10-days.csv"
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "fetch-weather" },
+    { "source": "fetch-weather", "target": "build-csv" },
+    { "source": "build-csv", "target": "write-csv" },
+    { "source": "write-csv", "target": "read-csv" },
+    { "source": "read-csv", "target": "email-draft" },
+    { "source": "email-draft", "target": "send-report" },
+    { "source": "read-csv", "target": "send-report" }
+  ]
+}

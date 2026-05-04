@@ -152,6 +152,59 @@ export function NodeGlyph(props: { wfType: string }): ReactElement {
       </svg>
     );
   }
+  if (t === "autogen.agent") {
+    const gid = `sa-${uid}`;
+    return (
+      <svg className={iconClass} viewBox="0 0 24 24" fill="none" aria-hidden>
+        <defs>
+          <linearGradient id={gid} x1="4" y1="4" x2="20" y2="20">
+            <stop stopColor="#22d3ee" />
+            <stop offset="1" stopColor="#0ea5e9" />
+          </linearGradient>
+        </defs>
+        <rect
+          x="5"
+          y="5"
+          width="14"
+          height="14"
+          rx="3.5"
+          stroke={`url(#${gid})`}
+          strokeWidth="1.4"
+          fill="rgba(34,211,238,0.12)"
+        />
+        <circle cx="12" cy="11" r="2.25" fill={`url(#${gid})`} />
+        <path
+          d="M8 16c1.2-1.5 2.8-2 4-2s2.8.5 4 2"
+          stroke={`url(#${gid})`}
+          strokeWidth="1.35"
+          strokeLinecap="round"
+          fill="none"
+        />
+      </svg>
+    );
+  }
+  if (t === "autogen.multi-agent" || t === "mfa.agent-group") {
+    const gid = `tm-${uid}`;
+    return (
+      <svg className={iconClass} viewBox="0 0 24 24" fill="none" aria-hidden>
+        <defs>
+          <linearGradient id={gid} x1="4" y1="6" x2="20" y2="18">
+            <stop stopColor="#c084fc" />
+            <stop offset="1" stopColor="#818cf8" />
+          </linearGradient>
+        </defs>
+        <circle cx="12" cy="9" r="2.75" stroke={`url(#${gid})`} strokeWidth="1.35" fill="rgba(192,132,252,0.15)" />
+        <circle cx="7" cy="15" r="2.25" stroke={`url(#${gid})`} strokeWidth="1.2" fill="rgba(192,132,252,0.1)" />
+        <circle cx="17" cy="15" r="2.25" stroke={`url(#${gid})`} strokeWidth="1.2" fill="rgba(192,132,252,0.1)" />
+        <path
+          d="M12 11.5v1.2M7.5 15.2L9.2 16.5M16.5 16.5l1.7-1.3"
+          stroke="#a78bfa"
+          strokeWidth="1"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
 
   const cid = `code-${uid}`;
   return (

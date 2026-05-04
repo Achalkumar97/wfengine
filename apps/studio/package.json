@@ -15,6 +15,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@wfengine/core": "^0.1.0",
     "@wfengine/nodes-base": "^0.1.0",
+    "@wfengine/nodes-agents": "^0.1.0",
     "@wfengine/shared": "^0.1.0",
     "@wfengine/ui": "^0.1.0",
     "lucide-react": "^1.11.0",

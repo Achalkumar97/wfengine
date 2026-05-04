@@ -14,10 +14,12 @@ export {
   StartExecutionBodySchema,
   RunInlineDefinitionBodySchema,
   SingleNodeRunSchema,
+  AgentLibraryDocumentInlineSchema,
   type CreateWorkflowVersionBody,
   type StartExecutionBody,
   type RunInlineDefinitionBody,
   type SingleNodeRun,
+  type AgentLibraryDocumentInline,
 } from "./server-schemas.js";
 
 export {
@@ -25,6 +27,7 @@ export {
   topologicalSort,
   entryNodeIds,
   collectAncestorIds,
+  directDownstreamToolOnlyNodeIds,
 } from "./workflow-dag.js";
 
 export { redactSecretsDeep } from "./redact-secrets.js";

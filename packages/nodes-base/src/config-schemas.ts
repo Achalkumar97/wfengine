@@ -21,6 +21,12 @@ export const CronTriggerConfigSchema = z.object({
   timezone: z.string().optional(),
 });
 
+/** Named attachment (UTF-8 text / CSV); sent via Nodemailer `attachments`. */
+export const EmailAttachmentSchema = z.object({
+  filename: z.string().min(1).max(512),
+  content: z.string(),
+});
+
 export const EmailSendConfigSchema = z.object({
   host: z.string().min(1),
   port: z.coerce.number().int().positive(),
@@ -33,6 +39,17 @@ export const EmailSendConfigSchema = z.object({
   text: z.string().optional(),
   html: z.string().optional(),
   replyTo: z.string().optional(),
+  attachments: z.array(EmailAttachmentSchema).max(20).optional(),
+  /**
+   * When `attachments` are not supplied via merged input and merged input has a string
+   * `content` (e.g. from file.read), attach it using this filename.
+   */
+  attachInputContentAsFilename: z.string().min(1).max(255).optional(),
+  /**
+   * When true, the workflow engine skips this node in the linear DAG pass so it is
+   * only executed via `workflow_node` agent tools (avoids running SMTP/file writes twice).
+   */
+  wfengineToolOnly: z.boolean().optional(),
 });
 
 export const EmailSendOutputSchema = z.object({
@@ -128,12 +145,22 @@ export const FileReadOutputSchema = z.object({
 export const FileWriteConfigSchema = z.object({
   path: z.string().min(1),
   content: z.string(),
+  /**
+   * When true, expand `{{key}}` placeholders in `path` from merged upstream + initial data
+   * (e.g. `reports/out-{{runDate}}.csv` with `runDate` in run initial payload).
+   */
+  interpolatePathFromInput: z.boolean().optional().default(false),
   /** When true, expand `{{path}}` placeholders in `content` from upstream data. */
   interpolateContentFromInput: z.boolean().optional().default(false),
   encoding: z.enum(["utf8", "base64"]).optional().default("utf8"),
   append: z.boolean().optional().default(false),
   createDirs: z.boolean().optional().default(true),
   baseDir: z.string().optional(),
+  /**
+   * When true, the workflow engine skips this node in the normal DAG pass so it is
+   * only executed via `workflow_node` agent tools.
+   */
+  wfengineToolOnly: z.boolean().optional(),
 });
 
 export const FileWriteOutputSchema = z.object({

@@ -8,6 +8,7 @@
   "dependencies": {
     "@wfengine/core": "^0.1.0",
     "@wfengine/nodes-base": "^0.1.0",
+    "@wfengine/nodes-agents": "^0.1.0",
     "@wfengine/shared": "^0.1.0"
   },
   "devDependencies": {

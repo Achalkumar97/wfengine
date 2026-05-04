@@ -2,6 +2,8 @@
 
 Developer-first workflow automation libraries: run **JSON DAG workflows** in Node.js with a plugin-style **node registry**, optional **REST + Postgres + BullMQ** execution service, and optional **React Flow** visual builder.
 
+**Extended docs:** [docs/README.md](./docs/README.md) (full stack, architecture diagrams, file tree, install/run).
+
 ## Repository layout
 
 | Area | Path |

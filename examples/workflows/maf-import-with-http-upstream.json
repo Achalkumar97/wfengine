@@ -1,0 +1,41 @@
+{
+  "id": "maf-with-http-upstream",
+  "version": 1,
+  "_comment": "Studio import: Fetch → MAF. Runner needs network + WFENGINE_OPENAI_API_KEY (or OPENAI_API_KEY). httpbin JSON becomes upstream context for researcher/reviewer.",
+  "nodes": [
+    {
+      "id": "fetch-sample-json",
+      "type": "http.request",
+      "config": {
+        "url": "https://httpbin.org/json",
+        "method": "GET",
+        "timeoutMs": 30000
+      }
+    },
+    {
+      "id": "maf-review",
+      "type": "mfa.agent-group",
+      "config": {
+        "groupName": "Summarize then review",
+        "orchestrationMode": "sequential",
+        "model": "gpt-4o-mini",
+        "temperature": 0.3,
+        "timeoutMs": 180000,
+        "taskInstructions": "Base your analysis only on the merged workflow JSON (includes HTTP response under upstream keys). Be concise.",
+        "agents": [
+          {
+            "name": "researcher",
+            "role": "analysis",
+            "systemPrompt": "Read the upstream workflow JSON and summarize the most important facts in 3 short bullet points."
+          },
+          {
+            "name": "reviewer",
+            "role": "critique",
+            "systemPrompt": "Critique the researcher's bullets: note one risk and one thing to double-check."
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [{ "source": "fetch-sample-json", "target": "maf-review" }]
+}

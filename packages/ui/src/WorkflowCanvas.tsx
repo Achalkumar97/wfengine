@@ -43,6 +43,7 @@ import { NodeActionsProvider } from "./NodeActionsContext.js";
 import { cn } from "./cn.js";
 import { RunFailureContext } from "./RunFailureContext.js";
 import { studioNodeTitle } from "./nodeLabels.js";
+import { CanvasAgentUiProvider } from "./CanvasAgentUiContext.js";
 
 /** Deep-clone node data so Duplicate does not share `config` with the source node. */
 function cloneWfNodeData(data: WfNodeData): WfNodeData {
@@ -77,11 +78,28 @@ export interface WorkflowCanvasHandle {
   autoLayout: () => void;
   /** Switch the right inspector tab (e.g. jump to Run after execution). */
   setInspectorTab: (tab: InspectorMainTab) => void;
+  /** Merge full config for a node (power users + persona edit dialog). */
+  updateNodeConfig: (nodeId: string, config: Record<string, unknown>) => void;
 }
+
+/** Minimal agent row for inspector tool/library pickers (Studio loads full library separately). */
+export type InspectorAgentLibraryEntry = {
+  id: string;
+  name: string;
+  /** Included so inspectors can insert/bind personas without a round-trip to stored JSON. */
+  systemPrompt?: string | undefined;
+  model?: string;
+};
 
 export interface InspectorRenderProps {
   selectedNode: Node<WfNodeData> | undefined;
   updateNodeConfig: (nodeId: string, config: Record<string, unknown>) => void;
+  /** All canvas nodes — used to wire AI tools to workflow node ids */
+  workflowNodes: Node<WfNodeData>[];
+  /** Reusable agents from Studio Agent Library (optional) */
+  agentLibraryEntries?: readonly InspectorAgentLibraryEntry[] | undefined;
+  /** Opens the Studio Agent Library dialog (manage / import personas). */
+  onOpenAgentLibrary?: () => void;
 }
 
 export interface WorkflowCanvasProps {
@@ -108,6 +126,19 @@ export interface WorkflowCanvasProps {
   runFailedNodeIds?: readonly string[];
   /** Studio: retry one node with cached upstream outputs (shows Re-run on node toolbar). */
   onReRunNodeWithCache?: (nodeId: string) => void;
+  /** Studio: Agent Library entries for AI node tool pickers */
+  agentLibraryEntries?: readonly InspectorAgentLibraryEntry[] | undefined;
+  /** Studio: open the Agent Library management dialog from AI inspectors */
+  onOpenAgentLibrary?: () => void;
+  /**
+   * Fired after the node is selected when the user clicks **Add agent** on the canvas
+   * agent bucket (e.g. open Agent Library + focus Node inspector in Studio).
+   */
+  onAgentBucketAdd?: (nodeId: string) => void;
+  /** After select — open persona editor (e.g. Studio dialog). */
+  onAgentBucketEditRow?: (nodeId: string, index: number) => void;
+  /** When delete would violate min agent count (toast in Studio). */
+  onAgentBucketDeleteRejected?: (reason: "below_minimum") => void;
 }
 
 function miniMapColorForType(wfType: unknown): string {
@@ -491,6 +522,7 @@ const WorkflowCanvasInner = forwardRef<
       fitView,
       autoLayout,
       setInspectorTab,
+      updateNodeConfig,
     }),
     [
       nodes,
@@ -503,6 +535,7 @@ const WorkflowCanvasInner = forwardRef<
       redo,
       fitView,
       autoLayout,
+      updateNodeConfig,
     ],
   );
 
@@ -541,6 +574,79 @@ const WorkflowCanvasInner = forwardRef<
       nds.map((n) => ({ ...n, selected: n.id === nodeId })),
     );
   }, [setNodes]);
+
+  const onAgentBucketAddInternal = useCallback(
+    (nodeId: string) => {
+      selectAndFocus(nodeId);
+      props.onAgentBucketAdd?.(nodeId);
+    },
+    [selectAndFocus, props.onAgentBucketAdd],
+  );
+
+  const deleteAgentRow = useCallback(
+    (nodeId: string, index: number) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== nodeId) return n;
+          const wfType = n.data.wfType;
+          if (wfType === "autogen.agent") {
+            if (index !== 0) return n;
+            const cfg = { ...(n.data.config ?? {}) } as Record<string, unknown>;
+            const nextCfg = { ...cfg };
+            delete nextCfg.libraryAgentId;
+            nextCfg.agentName = "agent";
+            nextCfg.systemPrompt =
+              "Describe this agent's role and behavior in one or two sentences.";
+            return {
+              ...n,
+              data: { ...n.data, config: nextCfg },
+            };
+          }
+          if (wfType !== "mfa.agent-group" && wfType !== "autogen.multi-agent") {
+            return n;
+          }
+          const cfg = { ...(n.data.config ?? {}) } as Record<string, unknown>;
+          const agents = cfg.agents;
+          if (!Array.isArray(agents)) return n;
+          if (index < 0 || index >= agents.length) return n;
+          const next = agents.filter((_, i) => i !== index);
+          const min = wfType === "autogen.multi-agent" ? 2 : 1;
+          if (next.length < min) {
+            props.onAgentBucketDeleteRejected?.("below_minimum");
+            return n;
+          }
+          return {
+            ...n,
+            data: { ...n.data, config: { ...cfg, agents: next } },
+          };
+        }),
+      );
+    },
+    [setNodes, props.onAgentBucketDeleteRejected],
+  );
+
+  const onEditAgentFromBucket = useCallback(
+    (nodeId: string, index: number) => {
+      selectAndFocus(nodeId);
+      props.onAgentBucketEditRow?.(nodeId, index);
+    },
+    [selectAndFocus, props.onAgentBucketEditRow],
+  );
+
+  const canvasAgentUiValue = useMemo(
+    () => ({
+      libraryEntries: props.agentLibraryEntries ?? [],
+      onAddAgentFromBucket: onAgentBucketAddInternal,
+      onEditAgentRow: onEditAgentFromBucket,
+      onDeleteAgentRow: deleteAgentRow,
+    }),
+    [
+      props.agentLibraryEntries,
+      onAgentBucketAddInternal,
+      onEditAgentFromBucket,
+      deleteAgentRow,
+    ],
+  );
 
   const nodeActions = useMemo(
     () => ({
@@ -707,6 +813,7 @@ const WorkflowCanvasInner = forwardRef<
 
         <div className="relative min-h-0 min-w-0 flex-1 bg-[#09090e]">
           <RunFailureContext.Provider value={runFailureSet}>
+          <CanvasAgentUiProvider value={canvasAgentUiValue}>
           <ReactFlow
             onInit={(instance) => {
               rfRef.current = instance;
@@ -820,6 +927,7 @@ const WorkflowCanvasInner = forwardRef<
               className="opacity-[0.28]"
             />
           </ReactFlow>
+          </CanvasAgentUiProvider>
           </RunFailureContext.Provider>
         </div>
 
@@ -889,6 +997,9 @@ const WorkflowCanvasInner = forwardRef<
                     props.renderInspector({
                       selectedNode,
                       updateNodeConfig,
+                      workflowNodes: nodes,
+                      agentLibraryEntries: props.agentLibraryEntries,
+                      onOpenAgentLibrary: props.onOpenAgentLibrary,
                     })
                   ) : (
                     defaultInspector

@@ -1,22 +1,52 @@
 import { randomUUID } from "node:crypto";
-import { collectAncestorIds, parseWorkflow } from "@wfengine/shared";
+import { collectAncestorIds } from "@wfengine/shared";
 import type { WorkflowDefinition } from "@wfengine/shared";
+import {
+  buildAgentInvokeOnlyNotRunMessage,
+  isLegacyLinearAgentInvokeOnlyPlaceholder,
+} from "./agent-invoke-only.js";
 import { createExecutionContext } from "./context.js";
 import { topologicalSort } from "./dag.js";
+import { createAgentToolDispatch } from "./agent-tool-dispatch.js";
 import {
   buildInputData,
   createErrorOutput,
   runWithRetries,
 } from "./executor.js";
+import { formatStructuredNodeFailureMessage } from "./structured-node-failure.js";
 import { WorkflowValidationError } from "./errors.js";
+import { emitNodeComplete, emitNodeStart } from "./node-progress.js";
 import type {
   ExecuteOptions,
   NodeDefinition,
   WorkflowExecuteResult,
   WorkflowLogger,
 } from "./node.types.js";
+import { outputsMapToRecord } from "./outputs-record.js";
 import { NodeRegistry } from "./registry.js";
 import { redactWorkflowExecuteResult } from "./redact-workflow-result.js";
+import { parseWorkflowFromEngineInput } from "./workflow-input-parse.js";
+
+/** Rich error text for Run inspector (always includes stack when available). */
+export function formatCaughtNodeError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const m = err.message ?? "";
+  const trimmed = m.trim();
+  if (
+    trimmed.startsWith("{") &&
+    trimmed.includes("__wfengineAgentFailure")
+  ) {
+    const trace =
+      err.stack && !m.includes(err.stack)
+        ? `\n\n--- Throw location ---\n${err.stack}`
+        : "";
+    return m + trace;
+  }
+  if (err.stack) {
+    return `${m}\n\n--- JavaScript stack ---\n${err.stack}`;
+  }
+  return m;
+}
 
 export interface WorkflowEngineOptions {
   /** Shared registry; default new empty registry */
@@ -54,12 +84,7 @@ export class WorkflowEngine {
     initialData?: unknown,
     options: ExecuteOptions = {},
   ): Promise<WorkflowExecuteResult> {
-    const workflow =
-      typeof workflowInput === "string"
-        ? parseWorkflow(JSON.parse(workflowInput) as unknown)
-        : typeof workflowInput === "object" && workflowInput !== null
-          ? parseWorkflow(workflowInput)
-          : parseWorkflow(workflowInput);
+    const workflow = parseWorkflowFromEngineInput(workflowInput);
 
     const startedAt = new Date().toISOString();
     const executionId = options.executionId ?? randomUUID();
@@ -87,12 +112,37 @@ export class WorkflowEngine {
 
       const def = this.registry.require(node.type, node.id);
 
-      if (notify) {
-        notify({
-          phase: "start",
+      emitNodeStart(notify, nodeId, node.type);
+
+      const rawCfg = (node.config ?? {}) as Record<string, unknown>;
+      if (rawCfg.wfengineToolOnly === true) {
+        const prior = outputs.get(nodeId);
+        if (
+          prior !== undefined &&
+          !isLegacyLinearAgentInvokeOnlyPlaceholder(prior)
+        ) {
+          emitNodeComplete(notify, {
+            nodeId,
+            nodeType: node.type,
+            ok: true,
+          });
+          continue;
+        }
+        const msg = buildAgentInvokeOnlyNotRunMessage(nodeId, node.type);
+        errors[nodeId] = msg;
+        outputs.set(nodeId, createErrorOutput(nodeId, msg));
+        ctx.logger.error(
+          "engine: wfengineToolOnly node was never run via agent workflow_node tool",
+          { nodeId, nodeType: node.type },
+        );
+        emitNodeComplete(notify, {
           nodeId,
           nodeType: node.type,
+          ok: false,
+          error: msg,
         });
+        if (onNodeError === "stop") break;
+        continue;
       }
 
       let config = node.config as Record<string, unknown>;
@@ -102,15 +152,12 @@ export class WorkflowEngine {
           const msg = parsed.error.message;
           errors[nodeId] = msg;
           outputs.set(nodeId, createErrorOutput(nodeId, msg));
-          if (notify) {
-            notify({
-              phase: "complete",
-              nodeId,
-              nodeType: node.type,
-              ok: false,
-              error: msg,
-            });
-          }
+          emitNodeComplete(notify, {
+            nodeId,
+            nodeType: node.type,
+            ok: false,
+            error: msg,
+          });
           if (onNodeError === "stop") break;
           continue;
         }
@@ -130,6 +177,18 @@ export class WorkflowEngine {
         logger: ctx.logger.child({ nodeId }),
       };
 
+      const agentToolDispatch = createAgentToolDispatch({
+        workflow,
+        outputs,
+        initialData,
+        edges: workflow.edges,
+        registry: this.registry,
+        context: childCtx,
+        callerNodeId: nodeId,
+        retries: options.retries,
+        signal: options.signal,
+      });
+
       try {
         const out = await runWithRetries(
           def as NodeDefinition,
@@ -140,33 +199,55 @@ export class WorkflowEngine {
             config,
             inputData,
             context: childCtx,
+            agentToolDispatch,
           },
           options.retries,
           options.signal,
         );
-        outputs.set(nodeId, out);
-        if (notify) {
-          notify({
-            phase: "complete",
+        const structuredMsg = formatStructuredNodeFailureMessage(
+          nodeId,
+          node.type,
+          out,
+        );
+        if (structuredMsg) {
+          errors[nodeId] = structuredMsg;
+          ctx.logger.warn("Node reported structured failure", {
             nodeId,
             nodeType: node.type,
-            ok: true,
+            message: structuredMsg,
           });
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        errors[nodeId] = message;
-        ctx.logger.error("Node execution failed", { nodeId, message });
-
-        if (notify) {
-          notify({
-            phase: "complete",
+          outputs.set(
+            nodeId,
+            onNodeError === "continue"
+              ? createErrorOutput(nodeId, structuredMsg)
+              : out,
+          );
+          emitNodeComplete(notify, {
             nodeId,
             nodeType: node.type,
             ok: false,
-            error: message,
+            error: structuredMsg,
           });
+          if (onNodeError === "stop") break;
+          continue;
         }
+        outputs.set(nodeId, out);
+        emitNodeComplete(notify, {
+          nodeId,
+          nodeType: node.type,
+          ok: true,
+        });
+      } catch (err) {
+        const message = formatCaughtNodeError(err);
+        errors[nodeId] = message;
+        ctx.logger.error("Node execution failed", { nodeId, message });
+
+        emitNodeComplete(notify, {
+          nodeId,
+          nodeType: node.type,
+          ok: false,
+          error: message,
+        });
 
         if (onNodeError === "continue") {
           outputs.set(nodeId, createErrorOutput(nodeId, message));
@@ -177,8 +258,7 @@ export class WorkflowEngine {
     }
 
     const finishedAt = new Date().toISOString();
-    const outputRecord: Record<string, unknown> = {};
-    for (const [k, v] of outputs) outputRecord[k] = v;
+    const outputRecord = outputsMapToRecord(outputs);
 
     const failedKeys = Object.keys(errors);
     let status: WorkflowExecuteResult["status"];
@@ -212,12 +292,7 @@ export class WorkflowEngine {
     initialData?: unknown,
     options: ExecuteOptions = {},
   ): Promise<WorkflowExecuteResult> {
-    const workflow =
-      typeof workflowInput === "string"
-        ? parseWorkflow(JSON.parse(workflowInput) as unknown)
-        : typeof workflowInput === "object" && workflowInput !== null
-          ? parseWorkflow(workflowInput)
-          : parseWorkflow(workflowInput);
+    const workflow = parseWorkflowFromEngineInput(workflowInput);
 
     const node = workflow.nodes.find((n) => n.id === targetNodeId);
     if (!node) {
@@ -253,13 +328,7 @@ export class WorkflowEngine {
     const notify = options.onNodeProgress;
     const def = this.registry.require(node.type, node.id);
 
-    if (notify) {
-      notify({
-        phase: "start",
-        nodeId: targetNodeId,
-        nodeType: node.type,
-      });
-    }
+    emitNodeStart(notify, targetNodeId, node.type);
 
     let config = node.config as Record<string, unknown>;
     if (def.configSchema) {
@@ -267,18 +336,14 @@ export class WorkflowEngine {
       if (!parsed.success) {
         const msg = parsed.error.message;
         outputs.set(targetNodeId, createErrorOutput(targetNodeId, msg));
-        if (notify) {
-          notify({
-            phase: "complete",
-            nodeId: targetNodeId,
-            nodeType: node.type,
-            ok: false,
-            error: msg,
-          });
-        }
+        emitNodeComplete(notify, {
+          nodeId: targetNodeId,
+          nodeType: node.type,
+          ok: false,
+          error: msg,
+        });
         const finishedAtEarly = new Date().toISOString();
-        const outputRecordEarly: Record<string, unknown> = {};
-        for (const [k, v] of outputs) outputRecordEarly[k] = v;
+        const outputRecordEarly = outputsMapToRecord(outputs);
         return redactWorkflowExecuteResult({
           status: "failed",
           executionId,
@@ -305,6 +370,18 @@ export class WorkflowEngine {
       logger: ctx.logger.child({ nodeId: targetNodeId }),
     };
 
+    const agentToolDispatch = createAgentToolDispatch({
+      workflow,
+      outputs,
+      initialData,
+      edges: workflow.edges,
+      registry: this.registry,
+      context: childCtx,
+      callerNodeId: targetNodeId,
+      retries: options.retries,
+      signal: options.signal,
+    });
+
     const errors: Record<string, string> = {};
 
     try {
@@ -317,41 +394,56 @@ export class WorkflowEngine {
           config,
           inputData,
           context: childCtx,
+          agentToolDispatch,
         },
         options.retries,
         options.signal,
       );
-      outputs.set(targetNodeId, out);
-      if (notify) {
-        notify({
-          phase: "complete",
+      const structuredMsg = formatStructuredNodeFailureMessage(
+        targetNodeId,
+        node.type,
+        out,
+      );
+      if (structuredMsg) {
+        errors[targetNodeId] = structuredMsg;
+        ctx.logger.warn("Node reported structured failure", {
+          nodeId: targetNodeId,
+          nodeType: node.type,
+          message: structuredMsg,
+        });
+        outputs.set(targetNodeId, out);
+        emitNodeComplete(notify, {
+          nodeId: targetNodeId,
+          nodeType: node.type,
+          ok: false,
+          error: structuredMsg,
+        });
+      } else {
+        outputs.set(targetNodeId, out);
+        emitNodeComplete(notify, {
           nodeId: targetNodeId,
           nodeType: node.type,
           ok: true,
         });
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatCaughtNodeError(err);
       errors[targetNodeId] = message;
       ctx.logger.error("Node execution failed", {
         nodeId: targetNodeId,
         message,
       });
       outputs.set(targetNodeId, createErrorOutput(targetNodeId, message));
-      if (notify) {
-        notify({
-          phase: "complete",
-          nodeId: targetNodeId,
-          nodeType: node.type,
-          ok: false,
-          error: message,
-        });
-      }
+      emitNodeComplete(notify, {
+        nodeId: targetNodeId,
+        nodeType: node.type,
+        ok: false,
+        error: message,
+      });
     }
 
     const finishedAt = new Date().toISOString();
-    const outputRecord: Record<string, unknown> = {};
-    for (const [k, v] of outputs) outputRecord[k] = v;
+    const outputRecord = outputsMapToRecord(outputs);
 
     const status: WorkflowExecuteResult["status"] =
       errors[targetNodeId] !== undefined ? "failed" : "completed";

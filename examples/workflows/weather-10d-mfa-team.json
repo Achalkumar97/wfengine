@@ -1,0 +1,121 @@
+{
+  "id": "weather-10d-mfa-team",
+  "version": 1,
+  "_readme": [
+    "=== 10-day weather — autogen.multi-agent + tools (MFA) ===",
+    "Same data flow as weather-10d-report-email, but one multi-agent team instead of separate autogen nodes.",
+    "1) fetch-weather: Open-Meteo past_days=10 (free, no key). 2) Three round-robin turns: analyst → csv_writer → action_executor.",
+    "action_executor ONLY calls write_csv_report then send_client_email (like gym earphones). tool-* nodes use wfengineToolOnly so they are not run twice (DAG + tool); if the agent never calls them, the run fails with an explicit engine error.",
+    "",
+    "=== Initial data ===",
+    "{ \"runDate\": \"YYYY-MM-DD\" } — used in CSV path and tool args. May default to today if your runner applies runDate defaulting on the team node.",
+    "",
+    "=== Configure ===",
+    "OPENAI_API_KEY or WFENGINE_OPENAI_API_KEY. SMTP: set tool-send-email authPass (Gmail app password), from, to. Outbound HTTPS to api.open-meteo.com + OpenAI.",
+    "",
+    "=== Agent-invoke-only write/email ===",
+    "Keep wfengineToolOnly on tool-send-email / tool-write-csv here — they must not run as duplicate DAG steps. The agent invokes them as workflow_node tools; if it does not, the run fails with an explicit error. Engine merges tool outputs so write → email chaining works (agent-tool-dispatch).",
+    "`multiAgentToolBinding: pipeline_last_turn_tools_required` — when maxTurns equals agent count, the last turn’s first response must use tools (OpenAI tool_choice), avoiding models that answer with text only.",
+    "",
+    "For linear SMTP without tools, use weather-10d-report-email.json."
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "fetch-weather",
+      "type": "http.request",
+      "config": {
+        "url": "https://api.open-meteo.com/v1/forecast?latitude=19.076&longitude=72.8777&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto&past_days=10",
+        "method": "GET",
+        "timeoutMs": 30000
+      }
+    },
+    {
+      "id": "weather-team",
+      "type": "autogen.multi-agent",
+      "config": {
+        "teamName": "Weather — 10d CSV + client email",
+        "model": "gpt-4o-mini",
+        "temperature": 0.2,
+        "timeoutMs": 600000,
+        "maxTurns": 3,
+        "runtime": "orchestrated_openai",
+        "requiredUpstreamFields": ["runDate"],
+        "multiAgentToolBinding": "pipeline_last_turn_tools_required",
+        "taskInstructions": "PIPELINE (strict):\n- Agents 1–2 (analyst → csv_writer): analysis and CSV text only. They MUST NOT call workflow tools.\n- Agent 3 (action_executor) ONLY: call tools in order — first write_csv_report, then send_client_email.\n\nCONTEXT:\n- Merged JSON includes HTTP result under `body` (Open-Meteo forecast JSON with `daily` arrays for the last ~10 days).\n- Use initial payload `runDate` (YYYY-MM-DD) everywhere filenames require it.\n\nTOOL ORDER:\n1) write_csv_report — must succeed before email.\n2) send_client_email — attach the same CSV bytes as in step 1.",
+        "tools": [
+          {
+            "kind": "workflow_node",
+            "nodeId": "tool-write-csv",
+            "displayName": "write_csv_report",
+            "description": "STEP 1 (before email). Writes UTF-8 CSV to disk. Arguments JSON MUST include: csvContent (string, exact RFC4180 CSV from csv_writer including header), runDate (YYYY-MM-DD matching initial payload). Path: reports/weather-10d-{runDate}.csv."
+          },
+          {
+            "kind": "workflow_node",
+            "nodeId": "tool-send-email",
+            "displayName": "send_client_email",
+            "description": "STEP 2 (after write succeeds). Sends SMTP email. Arguments: subject (string), text (plain summary for client, 2–4 short paragraphs; do not paste full CSV in body), attachments: one element { filename: \"weather-10d-{runDate}.csv\", content: exact same string as csvContent from STEP 1 }. Optional to override recipient."
+          }
+        ],
+        "agents": [
+          {
+            "name": "analyst",
+            "role": "Trend summary",
+            "systemPrompt": "You are the Analyst (**no tools**).\n\nRead merged workflow JSON: HTTP `body` has Open-Meteo `daily` with `time`, `temperature_2m_max`, `temperature_2m_min`, `precipitation_sum`.\n\nOutput 5–8 bullets: warmest/coldest day hints, rainiest day, 2–3 sentences on gym/outdoor outlook for the location. If fetch failed (`ok` false or no daily), say data unavailable briefly.\n\nDo not output CSV here."
+          },
+          {
+            "name": "csv_writer",
+            "role": "CSV only",
+            "systemPrompt": "You are CSV Writer (**no tools**). Output ONLY one CSV document — no markdown fences, no commentary.\n\nHeader row MUST be exactly:\ndate,temp_max_c,temp_min_c,precip_mm\n\nUse ISO dates from body.daily.time and aligned array indices from body.daily. Numbers only in numeric columns. RFC4180 quoting if needed.\n\nEnd with a single newline.\n\nThis CSV must be copied verbatim by action_executor into the write_csv_report tool."
+          },
+          {
+            "name": "action_executor",
+            "role": "Tools only",
+            "systemPrompt": "You are the Action Executor — **call the two workflow tools only** (do not explain execution order). Do not invent failure messages; if a tool returns JSON with \"error\", paste that JSON.\n\n1) Find csv_writer’s last message — that entire body is the CSV string.\n\n2) Call **write_csv_report** with JSON:\n{ \"csvContent\": \"<exact CSV>\", \"runDate\": \"<from merged context runDate>\" }\n\n3) Then call **send_client_email** with JSON:\n{\n  \"subject\": \"10-day weather — <runDate>\",\n  \"text\": \"<2–4 sentences; Open-Meteo disclaimer>\",\n  \"attachments\": [\n    { \"filename\": \"weather-10d-<runDate>.csv\", \"content\": \"<exact same string as csvContent>\" }\n  ]\n}\n\nIf a tool errors, output only the tool response JSON and stop."
+          }
+        ]
+      }
+    },
+    {
+      "id": "tool-write-csv",
+      "type": "file.write",
+      "config": {
+        "wfengineToolOnly": true,
+        "path": "reports/weather-10d-{{runDate}}.csv",
+        "interpolatePathFromInput": true,
+        "content": "{{csvContent}}",
+        "interpolateContentFromInput": true,
+        "encoding": "utf8",
+        "append": false,
+        "createDirs": true
+      }
+    },
+    {
+      "id": "tool-send-email",
+      "type": "email.send",
+      "config": {
+        "wfengineToolOnly": true,
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "secure": false,
+        "authUser": "you@example.com",
+        "authPass": "PASTE_GMAIL_APP_PASSWORD",
+        "from": "you@example.com",
+        "to": "client@example.com",
+        "subject": "Weather report (overridden by tool)",
+        "text": ".",
+        "attachInputContentAsFilename": "weather-last-10-days.csv"
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "fetch-weather" },
+    { "source": "fetch-weather", "target": "weather-team" },
+    { "source": "weather-team", "target": "tool-write-csv" },
+    { "source": "tool-write-csv", "target": "tool-send-email" }
+  ]
+}
