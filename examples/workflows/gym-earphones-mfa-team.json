@@ -1,0 +1,158 @@
+{
+  "id": "gym-earphones-mfa-team",
+  "version": 4,
+  "_readme": [
+    "=== Gym earphones — autogen.multi-agent + workflow tools (v4) ===",
+    "Five research/analysis agents produce one CSV (excel_writer). One final Action Executor agent",
+    "calls workflow_node tools only: (1) write_csv_report → (2) send_client_email with attachment.",
+    "",
+    "=== Tavily web search (node web-search-tavily) ===",
+    "Graph: start → web-search-tavily → gym-autogen-team. The HTTP node POSTs to https://api.tavily.com/search (see Tavily docs).",
+    "Replace PASTE_TAVILY_API_KEY in that node’s config body with your key (do not commit real keys). Runner must allow outbound HTTPS to api.tavily.com.",
+    "Merged input to the multi-agent node includes top-level keys from the HTTP response: status, ok, headers, body — Tavily JSON is in body.",
+    "",
+    "=== Required initial payload ===",
+    "{ \"runDate\": \"YYYY-MM-DD\", \"budgetInr\": 2500, \"region\": \"IN\" }",
+    "Edges chain gym-autogen-team → tool-write-csv → tool-send-email so linear execution hits the team before tool placeholders.",
+    "runDate: required upstream; if omitted but listed in requiredUpstreamFields, defaults to today (UTC YYYY-MM-DD). Filenames use reports/gym-earphones-<runDate>.csv.",
+    "",
+    "=== LLM ===",
+    "Set OPENAI_API_KEY or WFENGINE_OPENAI_API_KEY on the runner, or openAiApiKey on gym-autogen-team.",
+    "",
+    "=== Gmail SMTP password (EMAIL_PASS) ===",
+    "The email.send node uses Gmail (smtp.gmail.com:587). Sender is achal@signitysolutions.com.",
+    "You MUST supply the mailbox password as a Gmail App Password (not your normal login):",
+    "Google Account → Security → 2-Step Verification → App passwords.",
+    "Recommended for automation:",
+    "- Export EMAIL_PASS=<your 16-char app password> in the shell that runs the workflow worker, AND",
+    "- Paste that same value into the tool-send-email node config field authPass in Studio (until your runner injects secrets automatically).",
+    "Never commit real passwords in git.",
+    "",
+    "=== Tools (wfengineToolOnly) ===",
+    "tool-write-csv and tool-send-email use wfengineToolOnly so they run only when the Action Executor invokes them (not as duplicate DAG steps); otherwise the run fails with an explicit error.",
+    "Executor order is mandatory: write CSV file first, then send email with identical CSV bytes in attachments.",
+    "",
+    "=== Legal / safety ===",
+    "Tavily snippets are third-party; models may still hallucinate — treat prices and stock as unverified until checked manually."
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "web-search-tavily",
+      "type": "http.request",
+      "config": {
+        "url": "https://api.tavily.com/search",
+        "method": "POST",
+        "timeoutMs": 45000,
+        "body": {
+          "api_key": "PASTE_TAVILY_API_KEY",
+          "query": "best wireless earphones India gym workout sweat resistant budget 2500 INR",
+          "search_depth": "basic",
+          "include_answer": true,
+          "max_results": 10
+        }
+      }
+    },
+    {
+      "id": "gym-autogen-team",
+      "type": "autogen.multi-agent",
+      "config": {
+        "teamName": "Gym earphones — research + action executor",
+        "model": "gpt-4o-mini",
+        "temperature": 0.15,
+        "timeoutMs": 600000,
+        "maxTurns": 6,
+        "runtime": "orchestrated_openai",
+        "requiredUpstreamFields": ["runDate"],
+        "taskInstructions": "PIPELINE (strict):\n- Agents 1–5 (researcher → excel_writer): analysis only. They MUST NOT call any workflow tools (no write_csv_report, no send_client_email).\n- Agent 6 (action_executor) ONLY: call tools in order — first write_csv_report, then send_client_email.\n\nUPSTREAM WEB CONTEXT:\n- The merged workflow JSON may include `body` (and `status`) from node web-search-tavily (Tavily API response). Ground factual claims in that `body` when present; still apply GLOBAL CONTENT RULES below.\n\nGLOBAL CONTENT RULES:\n- Budget ≤ ₹2,500 INR per unit (India). Gym use case (fit, sweat resistance, battery).\n- Do not invent ratings, review counts, live prices, or stock.\n- Never fabricate product URLs; follow Collector link-status rules.\n\nExecutor must pass runDate from the initial JSON payload (same YYYY-MM-DD as the run).",
+        "tools": [
+          {
+            "kind": "workflow_node",
+            "nodeId": "tool-write-csv",
+            "displayName": "write_csv_report",
+            "description": "STEP 1 (call before email). Writes UTF-8 CSV to disk. Arguments object MUST include: csvContent (string, exact full CSV from excel_writer including header row, no markdown code fences), runDate (string YYYY-MM-DD matching workflow initialData.runDate). Writes to reports/gym-earphones-{runDate}.csv."
+          },
+          {
+            "kind": "workflow_node",
+            "nodeId": "tool-send-email",
+            "displayName": "send_client_email",
+            "description": "STEP 2 (only after write_csv_report succeeds). Sends SMTP email with attachment. Arguments: subject (string), text (plain body ~150–220 words; do not paste full CSV in body), to (optional string; defaults to node config if omitted), attachments: exactly one element { filename: \"gym-earphones-{runDate}.csv\", content: same string as csvContent from step 1 }."
+          }
+        ],
+        "agents": [
+          {
+            "name": "researcher",
+            "role": "Desk research",
+            "systemPrompt": "You are the Researcher (**no workflow tools**).\n\nINPUT: The merged Context JSON may include `body` from an upstream Tavily web search (results/snippets). Prefer candidate TRUE wireless / wireless earphone models that are **supported by those snippets or titles** when `body` is present and contains results. If `body` is missing, empty, or the search failed (check `ok`/`status`), fall back to general knowledge and state one line: \"Web results unavailable — using model knowledge only.\"\n\nTask: List candidate models (brand + model) for workouts, plausibly under ₹2,500 in India.\n\nRules:\n- 6–10 bullets max.\n- Each bullet: Brand, model, short gym note (IPX if known; else \"IPX not recalled\").\n- Do NOT invent MSRP. Rough bands only as \"Approx.\" if needed.\n- End with: \"Limitations: verify prices, availability, and links live.\""
+          },
+          {
+            "name": "evaluator",
+            "role": "Gym suitability filter",
+            "systemPrompt": "You are the Evaluator (**no tools**).\n\nInputs: Researcher bullets + workflow JSON (budget, region).\n\nReduce to ≤5 models best for gym use under ₹2.5k. Emphasize IPX/fit/battery; cite \"NR\" when unknown.\n\nIf zero models qualify, output line NO_QUALIFYING_PRODUCTS then explain.\nOtherwise 2–4 sentences per kept model."
+          },
+          {
+            "name": "collector",
+            "role": "Links & link integrity",
+            "systemPrompt": "You are the Data Collector (**no tools**).\n\nFor each Evaluator-kept model (max 5), output one block:\n---\nProduct: …\nPrice band (INR): …\nKey specs (one line): …\nLink line: …\nLink status: VERIFIED_PATTERN | SUGGESTED_SEARCH | OFFICIAL_ONLY | UNAVAILABLE\nRating: NR\n---\nPrefer SUGGESTED_SEARCH over fake PDP URLs."
+          },
+          {
+            "name": "validator",
+            "role": "Quality gate",
+            "systemPrompt": "You are the Validator (**no tools**).\n\nSECTION A — one line: VERDICT: PASS | FALLBACK_EMPTY\nSECTION B — ISSUES (bullets)\nSECTION C — one line: CSV_ROWS: N\nDo not output CSV."
+          },
+          {
+            "name": "excel_writer",
+            "role": "CSV export only",
+            "systemPrompt": "You are Excel Writer (**no tools**). Output ONLY one CSV document — no markdown fences, no commentary.\n\nHeader row MUST be exactly:\n\"Product Name\",\"Price INR Band\",\"Key Features\",\"Link or Search Query\",\"Link Status\",\"Rating\",\"Why Gym Suitable\"\n\nRFC 4180 quoting. Link Status tokens from Collector when possible.\n\nIf FALLBACK_EMPTY: header + one fallback row per prior scenario rules.\nEnd with a single newline.\n\nThis CSV text will be copied verbatim by action_executor — keep it machine-clean."
+          },
+          {
+            "name": "action_executor",
+            "role": "Tool calls only",
+            "systemPrompt": "You are the Action Executor — **your only job is to call two workflow tools in order**. Do not add research, prose, or CSV generation yourself.\n\nPREREQUISITE: Find the last message from **excel_writer** in this thread. That entire message body is the CSV (copy it exactly).\n\nSTEP A — Call **write_csv_report** once with JSON arguments:\n{\n  \"csvContent\": \"<paste EXACT excel_writer CSV, unchanged>\",\n  \"runDate\": \"<exact runDate string from the workflow Context / initial payload>\"\n}\n\nWait until the tool returns success (check tool response for errors).\n\nSTEP B — Call **send_client_email** once with JSON arguments:\n{\n  \"subject\": \"Gym earphones shortlist — India — <runDate>\",\n  \"text\": \"Plain email: 150–220 words. Summarize desk-research limits, reference the CSV filename gym-earphones-<runDate>.csv, disclaimer that prices/links need human verification.\",\n  \"attachments\": [\n    {\n      \"filename\": \"gym-earphones-<runDate>.csv\",\n      \"content\": \"<exact same string as csvContent from STEP A>\"\n    }\n  ]\n}\nUse runDate from initial payload for <runDate>. Omit \"to\" to use the default recipient configured on the email node.\n\nIf either tool errors, report the error JSON briefly and stop.\nIf both succeed, one closing sentence: file written under reports/ and email sent."
+          }
+        ]
+      }
+    },
+    {
+      "id": "tool-write-csv",
+      "type": "file.write",
+      "config": {
+        "wfengineToolOnly": true,
+        "path": "reports/gym-earphones-{{runDate}}.csv",
+        "interpolatePathFromInput": true,
+        "content": "{{csvContent}}",
+        "interpolateContentFromInput": true,
+        "encoding": "utf8",
+        "append": false,
+        "createDirs": true
+      }
+    },
+    {
+      "id": "tool-send-email",
+      "type": "email.send",
+      "config": {
+        "wfengineToolOnly": true,
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "secure": false,
+        "authUser": "achal@signitysolutions.com",
+        "authPass": "PASTE_GMAIL_APP_PASSWORD",
+        "from": "achal@signitysolutions.com",
+        "to": "1997achalkumar@gmail.com",
+        "subject": "Gym earphones report (overridden by tool)",
+        "text": ".",
+        "attachments": []
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "web-search-tavily" },
+    { "source": "web-search-tavily", "target": "gym-autogen-team" },
+    { "source": "gym-autogen-team", "target": "tool-write-csv" },
+    { "source": "tool-write-csv", "target": "tool-send-email" }
+  ]
+}

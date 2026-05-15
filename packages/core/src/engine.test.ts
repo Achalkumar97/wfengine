@@ -94,6 +94,39 @@ describe("WorkflowEngine", () => {
     expect(result.outputs["n"]).toBeDefined();
   });
 
+  it("treats structured success:false as node failure", async () => {
+    const validating: NodeDefinition = {
+      type: "validating",
+      label: "Validating",
+      execute: async () => ({
+        success: false as const,
+        error: "Missing required fields",
+        missingFields: ["runDate"],
+        message: "Please provide runDate in the initial payload.",
+      }),
+    };
+    const engine = new WorkflowEngine();
+    engine.registerNode(validating);
+
+    const wf: WorkflowDefinition = {
+      id: "wf",
+      nodes: [{ id: "v", type: "validating", config: {} }],
+      edges: [],
+    };
+
+    const progress: { ok?: boolean }[] = [];
+    const result = await engine.execute(wf, {}, {
+      onNodeProgress: (ev) => {
+        if (ev.phase === "complete") progress.push({ ok: ev.ok });
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.errors["v"]).toContain("runDate");
+    expect(result.errors["v"]).toContain("Missing required fields");
+    expect(progress).toEqual([{ ok: false }]);
+  });
+
   it("calls onNodeProgress start/complete per node", async () => {
     const engine = new WorkflowEngine();
     engine.registerNode(noop);
@@ -122,5 +155,91 @@ describe("WorkflowEngine", () => {
       "start:b:",
       "complete:b:y",
     ]);
+  });
+
+  it("preserves agent-invoked output for wfengineToolOnly nodes (does not overwrite with linear skip)", async () => {
+    const invokesTool: NodeDefinition = {
+      type: "invokes-tool",
+      label: "Invokes tool",
+      execute: async ({ agentToolDispatch }) => {
+        if (!agentToolDispatch) throw new Error("expected agentToolDispatch");
+        const out = await agentToolDispatch.executeWorkflowNode("t1", {
+          v: 42,
+        });
+        return { agent: true, toolOut: out };
+      },
+    };
+    const toolTarget: NodeDefinition = {
+      type: "tool-target",
+      label: "Tool target",
+      execute: async ({ inputData }) => ({ fromTool: true, inputData }),
+    };
+
+    const engine = new WorkflowEngine();
+    engine.registerNode(invokesTool);
+    engine.registerNode(toolTarget);
+
+    const wf: WorkflowDefinition = {
+      id: "wf-tool-preserve",
+      nodes: [
+        { id: "agent", type: "invokes-tool", config: {} },
+        {
+          id: "t1",
+          type: "tool-target",
+          config: { wfengineToolOnly: true },
+        },
+      ],
+      edges: [{ source: "agent", target: "t1" }],
+    };
+
+    const result = await engine.execute(wf, {});
+    expect(result.status).toBe("completed");
+    expect(result.outputs["t1"]).toMatchObject({
+      fromTool: true,
+      inputData: expect.objectContaining({ v: 42 }),
+    });
+    expect((result.outputs["t1"] as Record<string, unknown>).__wfengineToolOnly).toBe(
+      undefined,
+    );
+  });
+
+  it("fails with explicit error when wfengineToolOnly node was not agent-invoked", async () => {
+    const engine = new WorkflowEngine();
+    engine.registerNode(noop);
+    const wf: WorkflowDefinition = {
+      id: "wf-tool-miss",
+      nodes: [
+        { id: "a", type: "noop", config: {} },
+        { id: "t1", type: "noop", config: { wfengineToolOnly: true } },
+      ],
+      edges: [{ source: "a", target: "t1" }],
+    };
+    const result = await engine.execute(wf, {});
+    expect(result.status).toBe("failed");
+    expect(result.errors["t1"]).toMatch(/agent-invoke-only/);
+    expect(
+      (result.outputs["t1"] as Record<string, unknown>).__wfengine_error,
+    ).toBeDefined();
+  });
+
+  it("records partial status when wfengineToolOnly miss and onNodeError is continue", async () => {
+    const engine = new WorkflowEngine();
+    engine.registerNode(noop);
+    const wf: WorkflowDefinition = {
+      id: "wf-tool-miss-cont",
+      nodes: [
+        { id: "a", type: "noop", config: {} },
+        { id: "t1", type: "noop", config: { wfengineToolOnly: true } },
+        { id: "b", type: "noop", config: {} },
+      ],
+      edges: [
+        { source: "a", target: "t1" },
+        { source: "t1", target: "b" },
+      ],
+    };
+    const result = await engine.execute(wf, {}, { onNodeError: "continue" });
+    expect(result.status).toBe("partial");
+    expect(result.errors["t1"]).toMatch(/workflow_node tool/);
+    expect(result.outputs["b"]).toBeDefined();
   });
 });

@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@wfengine/nodes-base/utils/validation.js": [
+        "../nodes-base/src/utils/validation.ts"
+      ]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../nodes-base" },
+    { "path": "../shared" }
+  ]
+}

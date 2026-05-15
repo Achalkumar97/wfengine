@@ -1,0 +1,61 @@
+{
+  "id": "autogen-then-maf-review",
+  "version": 1,
+  "_comment": "Studio import: AutoGen multi-agent (round-robin) → MAF group (refine/critique). Same OpenAI env on runner. 3 LLM stages total cost.",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "team-brainstorm",
+      "type": "autogen.multi-agent",
+      "config": {
+        "teamName": "planner-executor",
+        "runtime": "orchestrated_openai",
+        "model": "gpt-4o-mini",
+        "temperature": 0.4,
+        "maxTurns": 4,
+        "timeoutMs": 180000,
+        "taskInstructions": "Use the workflow JSON as context. Produce a short plan and concrete next steps.",
+        "agents": [
+          {
+            "name": "planner",
+            "systemPrompt": "From the payload, outline 2–3 goals and constraints in plain language."
+          },
+          {
+            "name": "executor",
+            "systemPrompt": "Turn the planner's outline into numbered actionable steps."
+          }
+        ]
+      }
+    },
+    {
+      "id": "maf-polish",
+      "type": "mfa.agent-group",
+      "config": {
+        "groupName": "polish",
+        "orchestrationMode": "sequential",
+        "model": "gpt-4o-mini",
+        "temperature": 0.3,
+        "timeoutMs": 180000,
+        "taskInstructions": "Treat earlier agent outputs as part of the merged JSON; produce a tight executive summary.",
+        "agents": [
+          {
+            "name": "researcher",
+            "systemPrompt": "Summarize the multi-agent transcript and payload into 3 bullets."
+          },
+          {
+            "name": "reviewer",
+            "systemPrompt": "Flag gaps or risks in the researcher's summary in one short paragraph."
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "team-brainstorm" },
+    { "source": "team-brainstorm", "target": "maf-polish" }
+  ]
+}

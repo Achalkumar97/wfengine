@@ -1,0 +1,51 @@
+{
+  "id": "agent-tools-skeleton",
+  "version": 1,
+  "_comment": "Phase 1 schema demo: autogen.agent lists tools by workflow node id. Executor tool-loop not active yet — safe to import. Replace UUIDs in library_agent tools when you add a real Agent Library.",
+  "nodes": [
+    {
+      "id": "seed",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "fetch-context",
+      "type": "http.request",
+      "config": {
+        "url": "https://httpbin.org/json",
+        "method": "GET",
+        "timeoutMs": 30000
+      }
+    },
+    {
+      "id": "coordinator",
+      "type": "autogen.agent",
+      "config": {
+        "agentName": "coordinator",
+        "systemPrompt": "You are a coordinator. When tool execution is enabled, you will call workflow tools by name. For now this graph documents tool wiring only.",
+        "model": "gpt-4o-mini",
+        "temperature": 0.3,
+        "timeoutMs": 120000,
+        "runtime": "openai_compatible",
+        "tools": [
+          {
+            "kind": "workflow_node",
+            "nodeId": "fetch-context",
+            "displayName": "Fetch JSON",
+            "description": "GET https://httpbin.org/json — use when fresh sample data is needed."
+          },
+          {
+            "kind": "library_agent",
+            "agentId": "00000000-0000-4000-8000-000000000001",
+            "displayName": "Library researcher (placeholder UUID)",
+            "description": "Replace with a real Agent Library agent id from Studio."
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    { "source": "seed", "target": "fetch-context" },
+    { "source": "fetch-context", "target": "coordinator" }
+  ]
+}

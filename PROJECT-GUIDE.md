@@ -109,7 +109,7 @@ Each registered node’s **`execute`** function receives **`inputData`** (merged
 
 ## Ports, services, and direct URLs (local defaults)
 
-Defaults below match **`.env.example`** and **`apps/studio/vite.config.ts`**. If you change **`PORT`** in `.env`, replace the old port everywhere the API appears.
+Defaults below match the repo root **`.env.example`** and **`apps/studio/vite.config.ts`**. If you change **`PORT`** in `.env`, replace the old port everywhere the API appears.
 
 ### Summary: what listens on which port
 

@@ -1,0 +1,5 @@
+# Railway should ignore these directories
+examples/
+packages/
+
+# Only deploy from apps/

@@ -61,6 +61,27 @@ export function getConfigPreviewLine(data: WfNodeData): string | null {
       }
       return `${o}/${r}@${ref}${suffix}${llmSuffix}`;
     }
+    case "mfa.agent-group": {
+      const m = typeof config.model === "string" ? config.model.trim() : "";
+      const mode =
+        typeof config.orchestrationMode === "string"
+          ? config.orchestrationMode
+          : "";
+      if (!m && !mode) return "MAF group";
+      return [mode, m].filter(Boolean).join(" · ");
+    }
+    case "autogen.agent": {
+      const n =
+        typeof config.agentName === "string" ? config.agentName.trim() : "";
+      const m = typeof config.model === "string" ? config.model.trim() : "";
+      return [n || "agent", m].filter(Boolean).join(" · ");
+    }
+    case "autogen.multi-agent": {
+      const t =
+        typeof config.teamName === "string" ? config.teamName.trim() : "";
+      const m = typeof config.model === "string" ? config.model.trim() : "";
+      return [t || "team", m].filter(Boolean).join(" · ");
+    }
     default:
       return null;
   }

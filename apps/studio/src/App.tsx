@@ -7,7 +7,9 @@ import {
   topologicalSort,
   type WorkflowDefinition,
 } from "@wfengine/shared";
+import type { AgentLibraryDocument } from "@wfengine/nodes-agents/schemas";
 import {
+  Bot,
   ClipboardPaste,
   CloudUpload,
   FolderOpen,
@@ -31,6 +33,10 @@ import {
 } from "react";
 import { toast, Toaster } from "sonner";
 import * as Dialog from "@radix-ui/react-dialog";
+import { loadAgentLibrary, saveAgentLibrary } from "./agent-library-storage.js";
+import { AddAgentToNodeDialog } from "./AddAgentToNodeDialog.js";
+import { AgentLibraryDialog } from "./AgentLibraryDialog.js";
+import { AgentPersonaEditDialog } from "./AgentPersonaEditDialog.js";
 import { NodeConfigPanel } from "./NodeConfigPanel.js";
 import { STUDIO_DEMO_EDGES, STUDIO_DEMO_NODES } from "./demo-flow.js";
 import { STUDIO_PALETTE } from "./palette-data.js";
@@ -131,6 +137,18 @@ export default function App(): ReactElement {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importPasteRaw, setImportPasteRaw] = useState("");
   const [importPasteError, setImportPasteError] = useState<string | null>(null);
+  const [agentLibraryDoc, setAgentLibraryDoc] = useState<AgentLibraryDocument>(
+    () => loadAgentLibrary(),
+  );
+  const [agentLibraryDialogOpen, setAgentLibraryDialogOpen] = useState(false);
+  const [addAgentDialogOpen, setAddAgentDialogOpen] = useState(false);
+  const [addAgentForNodeId, setAddAgentForNodeId] = useState<string | null>(
+    null,
+  );
+  const [personaEditTarget, setPersonaEditTarget] = useState<{
+    nodeId: string;
+    index: number;
+  } | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryRefresh, setLibraryRefresh] = useState(0);
   const [serverWorkflows, setServerWorkflows] = useState<WorkflowRow[]>([]);
@@ -138,6 +156,11 @@ export default function App(): ReactElement {
   const [serverError, setServerError] = useState<string | null>(null);
 
   const activeTab = tabs?.find((t) => t.tabId === activeTabId);
+
+  const agentLibraryUsageWorkflows = useMemo(
+    () => (tabs ?? []).map((t) => ({ nodes: t.nodes })),
+    [tabs],
+  );
   const localWorkspaces = useMemo(
     () => (libraryOpen ? listWorkspaces() : []),
     [libraryOpen, libraryRefresh],
@@ -447,7 +470,13 @@ export default function App(): ReactElement {
       const res = await fetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify({ definition, initialData }),
+        body: JSON.stringify({
+          definition,
+          initialData,
+          ...(agentLibraryDoc.agents.length > 0
+            ? { agentLibrary: agentLibraryDoc }
+            : {}),
+        }),
       });
 
       if (!res.ok) {
@@ -548,7 +577,7 @@ export default function App(): ReactElement {
     } finally {
       setRunBusy(false);
     }
-  }, [activeTab]);
+  }, [activeTab, agentLibraryDoc]);
 
   const runSingleNodeFromCache = useCallback(
     async (nodeId: string) => {
@@ -622,6 +651,9 @@ export default function App(): ReactElement {
             definition,
             initialData,
             singleNodeRun: { nodeId, seedOutputs },
+            ...(agentLibraryDoc.agents.length > 0
+              ? { agentLibrary: agentLibraryDoc }
+              : {}),
           }),
         });
 
@@ -727,7 +759,7 @@ export default function App(): ReactElement {
         setRunBusy(false);
       }
     },
-    [activeTab],
+    [activeTab, agentLibraryDoc],
   );
 
   const onImportFile = useCallback(
@@ -752,6 +784,11 @@ export default function App(): ReactElement {
     },
     [applyImportedWorkflow],
   );
+
+  const setAgentLibraryDocument = useCallback((doc: AgentLibraryDocument) => {
+    setAgentLibraryDoc(doc);
+    saveAgentLibrary(doc);
+  }, []);
 
   const onApplyPastedJson = useCallback(() => {
     setImportPasteError(null);
@@ -959,6 +996,13 @@ export default function App(): ReactElement {
             <span className="hidden lg:inline">Library</span>
           </ToolbarBtn>
           <ToolbarBtn
+            title="Agent Library — reusable personas (stored in this browser)"
+            onClick={() => setAgentLibraryDialogOpen(true)}
+          >
+            <Bot className="h-4 w-4" />
+            <span className="hidden lg:inline">Agents</span>
+          </ToolbarBtn>
+          <ToolbarBtn
             title="Publish this workflow to the server (create version)"
             onClick={async () => {
               const el = canvasRef.current;
@@ -1043,6 +1087,27 @@ export default function App(): ReactElement {
           palette={STUDIO_PALETTE}
           initialNodes={activeTab.nodes}
           initialEdges={activeTab.edges}
+          agentLibraryEntries={agentLibraryDoc.agents.map((a) => ({
+            id: a.id,
+            name: a.name,
+            systemPrompt: a.systemPrompt,
+            model: a.model,
+          }))}
+          onOpenAgentLibrary={() => setAgentLibraryDialogOpen(true)}
+          onAgentBucketAdd={(nodeId) => {
+            canvasRef.current?.setInspectorTab("node");
+            setAddAgentForNodeId(nodeId);
+            setAddAgentDialogOpen(true);
+          }}
+          onAgentBucketEditRow={(nodeId, index) => {
+            setPersonaEditTarget({ nodeId, index });
+            canvasRef.current?.setInspectorTab("node");
+          }}
+          onAgentBucketDeleteRejected={() =>
+            toast.error(
+              "Cannot remove this agent — the node requires a minimum number of personas.",
+            )
+          }
           onExport={() => undefined}
           onReRunNodeWithCache={runSingleNodeFromCache}
           onHistoryChange={setHist}
@@ -1170,6 +1235,50 @@ export default function App(): ReactElement {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      <AgentLibraryDialog
+        open={agentLibraryDialogOpen}
+        onOpenChange={setAgentLibraryDialogOpen}
+        libraryDocument={agentLibraryDoc}
+        onDocumentChange={setAgentLibraryDocument}
+        workflowsForUsage={agentLibraryUsageWorkflows}
+      />
+
+      <AddAgentToNodeDialog
+        open={addAgentDialogOpen}
+        onOpenChange={(o) => {
+          setAddAgentDialogOpen(o);
+          if (!o) setAddAgentForNodeId(null);
+        }}
+        targetNodeId={addAgentForNodeId}
+        getNodes={() => canvasRef.current?.getNodes() ?? []}
+        updateNodeConfig={(nodeId, config) => {
+          canvasRef.current?.updateNodeConfig(nodeId, config);
+        }}
+        libraryEntries={agentLibraryDoc.agents.map((a) => ({
+          id: a.id,
+          name: a.name,
+          systemPrompt: a.systemPrompt,
+          model: a.model,
+        }))}
+        onManageAgentLibrary={() => {
+          setAddAgentDialogOpen(false);
+          setAddAgentForNodeId(null);
+          setAgentLibraryDialogOpen(true);
+        }}
+      />
+
+      <AgentPersonaEditDialog
+        open={personaEditTarget !== null}
+        onOpenChange={(o) => {
+          if (!o) setPersonaEditTarget(null);
+        }}
+        target={personaEditTarget}
+        getNodes={() => canvasRef.current?.getNodes() ?? []}
+        updateNodeConfig={(nodeId, config) => {
+          canvasRef.current?.updateNodeConfig(nodeId, config);
+        }}
+      />
 
       <Dialog.Root open={libraryOpen} onOpenChange={setLibraryOpen}>
         <Dialog.Portal>

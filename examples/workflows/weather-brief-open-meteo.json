@@ -1,0 +1,50 @@
+{
+  "id": "weather-brief-open-meteo",
+  "version": 1,
+  "_readme": [
+    "=== Real-world demo (no paid search, no DB) ===",
+    "1) fetch-weather: GET Open-Meteo (free, no API key) — real current weather JSON for one fixed location (Mumbai area by default).",
+    "2) weather-brief: autogen.agent reads merged input (HTTP status + body) and writes a short plain-English workout weather brief.",
+    "",
+    "=== What you need ===",
+    "Runner: OPENAI_API_KEY or WFENGINE_OPENAI_API_KEY. Outbound HTTPS to api.open-meteo.com and OpenAI.",
+    "Studio: Import this JSON, set Initial data to {} (optional: add a note in task later). Click Run.",
+    "",
+    "=== Change city ===",
+    "Edit fetch-weather config url: set latitude= and longitude= to your coordinates (Open-Meteo global grid).",
+    "",
+    "See also: weather-10d-report-email.json (linear CSV + email); weather-10d-mfa-team.json (multi-agent + tools)."
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "fetch-weather",
+      "type": "http.request",
+      "config": {
+        "url": "https://api.open-meteo.com/v1/forecast?latitude=19.076&longitude=72.8777&current_weather=true",
+        "method": "GET",
+        "timeoutMs": 20000
+      }
+    },
+    {
+      "id": "weather-brief",
+      "type": "autogen.agent",
+      "config": {
+        "agentName": "weather_brief",
+        "model": "gpt-4o-mini",
+        "temperature": 0.25,
+        "timeoutMs": 120000,
+        "runtime": "openai_compatible",
+        "systemPrompt": "You help people decide if outdoor or gym time is reasonable given live weather data.\n\nThe user message will include merged workflow JSON. Look for the HTTP result: if `ok` is true, `body` is Open-Meteo JSON (current_weather has temperature, windspeed, weathercode). If the request failed or `body` is missing, say you could not load weather and suggest checking a local app.\n\nOutput (plain text, no markdown tables):\n- 2–4 short sentences: temp, wind, and one practical tip for someone going to the gym or running outside in that city.\n- One closing line: data source = Open-Meteo (not a forecast guarantee)."
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "fetch-weather" },
+    { "source": "fetch-weather", "target": "weather-brief" }
+  ]
+}
