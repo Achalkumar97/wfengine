@@ -2,7 +2,12 @@ import type { WorkflowLogger } from "@wfengine/core";
 import { z } from "zod";
 import { MfaAgentGroupConfigSchema } from "../schemas.js";
 import { formatAgentOrchestrationFailure } from "./agent-failure.js";
-import { openAiChatCompletion, resolveOpenAiFromEnv, type ChatMessage } from "./openai-chat.js";
+import {
+  effectiveLlmModel,
+  openAiChatCompletion,
+  resolveOpenAiFromEnv,
+  type ChatMessage,
+} from "./openai-chat.js";
 import { upstreamToJsonText } from "./upstream-payload.js";
 import type { ResolvedAgentPersona } from "./resolve-agent-library.js";
 
@@ -57,14 +62,21 @@ export async function runMfaAgentGroupOrchestration(opts: {
   finalAnswer: string;
   structured?: Record<string, unknown>;
 }> {
-  const { baseUrl, apiKey } = resolveOpenAiFromEnv(opts.config);
+  const resolved = resolveOpenAiFromEnv(opts.config);
+  const { baseUrl, apiKey, usedOllamaEnvFallback } = resolved;
+  const model = effectiveLlmModel(opts.config.model, usedOllamaEnvFallback);
+
   if (!apiKey) {
     throw formatAgentOrchestrationFailure({
       nodeType: "mfa.agent-group",
       phase: "openai_setup",
       underlyingMessage:
-        "mfa.agent-group: set WFENGINE_OPENAI_API_KEY or OPENAI_API_KEY on the workflow runner, or openAiApiKey on the node config",
+        "mfa.agent-group: set WFENGINE_OPENAI_API_KEY or OPENAI_API_KEY or openAiApiKey on the node, or OLLAMA_BASE_URL / WFENGINE_OLLAMA_BASE_URL for Ollama fallback",
     });
+  }
+
+  if (usedOllamaEnvFallback) {
+    opts.logger.info("mfa.agent-group: Ollama env fallback", { baseUrl, model });
   }
 
   const upstreamText = upstreamToJsonText(opts.upstream);
@@ -79,12 +91,12 @@ export async function runMfaAgentGroupOrchestration(opts: {
     let raw: string;
     try {
       opts.logger.info("mfa.agent-group: single_completion request", {
-        model: opts.config.model ?? "gpt-4o-mini",
+        model,
       });
       raw = await openAiChatCompletion({
         baseUrl,
         apiKey,
-        model: opts.config.model ?? "gpt-4o-mini",
+        model,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -170,7 +182,7 @@ export async function runMfaAgentGroupOrchestration(opts: {
       const text = await openAiChatCompletion({
         baseUrl,
         apiKey,
-        model: opts.config.model ?? "gpt-4o-mini",
+        model,
         messages: [...messages],
         temperature: opts.config.temperature ?? 0.3,
         timeoutMs: remaining,

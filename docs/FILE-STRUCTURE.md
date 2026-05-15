@@ -8,7 +8,7 @@ Monorepo root: **`workflow-engine-sdk`** (npm workspaces: `packages/*`, `apps/*`
 |------|---------|
 | `package.json` | Root scripts: `build`, `test`, `dev:server`, `dev:studio`, `db:*` |
 | `turbo.json` | Turborepo task graph (`build` depends on `^build`) |
-| `.env` / `.env.example` | Local secrets and service URLs (server/worker read repo root `.env`) |
+| `.env` / `.env.example` | Single template at repo root; Studio `VITE_*` copied into `apps/studio/.env` |
 | `infra/docker-compose.yml` | Optional local **PostgreSQL** + **Redis** |
 | `README.md` | Primary quick start and API overview |
 | `docs/` | Extended documentation (this folder) |

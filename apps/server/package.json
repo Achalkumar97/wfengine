@@ -19,7 +19,9 @@
     "db:push": "dotenv -e ../../.env -- prisma db push",
     "dev": "dotenv -e ../../.env -- tsx watch src/main.ts",
     "worker": "dotenv -e ../../.env -- tsx src/worker.ts",
-    "start": "dotenv -e ../../.env -- node dist/main.js",
+    "start": "node dist/main.js",
+    "start:worker": "node dist/worker.js",
+    "start:combined": "node dist/combined.js",
     "clean": "rm -rf dist"
   },
   "dependencies": {

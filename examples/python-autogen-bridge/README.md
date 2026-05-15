@@ -60,3 +60,34 @@ If the node still fails, check execution logs for `Python bridge exited` — oft
 ## 5. Production AutoGen
 
 Replace `wfengine_bridge_demo/__main__.py` with code that calls **real** AutoGen/ag2, reads the stdin payload (`mode`: `single` | `multi`, `upstream`, `agents`, …), and prints bridge JSON as in [`packages/nodes-agents/README.md`](../../packages/nodes-agents/README.md).
+
+## 6. Python `wfengine_llm` — OpenAI + Ollama fallback client
+
+Reusable **`LLMClient`** (sync/async chat + streaming): tries **OpenAI** when `OPENAI_API_KEY` is set; otherwise or on failure, uses **Ollama** at the OpenAI-compatible URL (`…/v1/chat/completions`).
+
+Install:
+
+```bash
+cd examples/python-autogen-bridge
+pip install -r requirements-llm.txt
+export PYTHONPATH="$(pwd)"
+```
+
+Configure via environment (repo root **`.env.example`** — Python `OLLAMA_*` / `OPENAI_*` section). Export vars or load repo-root `.env` before running scripts. Key variables:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OPENAI_API_KEY` | — | If set, primary backend is OpenAI |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Compatible API base |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Primary model name |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434/v1` | Ollama OpenAI-compatible base (**must include `/v1`**) — set for remote or non-default host |
+| `OLLAMA_API_KEY` | `ollama` | Bearer token (often ignored locally) |
+| `OLLAMA_MODEL` | `llama3.2` | Fallback model name |
+
+Example:
+
+```bash
+python examples/llm_client_example.py
+```
+
+See `wfengine_llm/client.py` for `LLMClient`, `LLMClientConfig`, and `LLMClientError`.

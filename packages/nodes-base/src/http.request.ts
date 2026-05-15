@@ -17,7 +17,47 @@ function sanitizeResponseHeaders(
   return out;
 }
 
-function assertSafeUrl(urlStr: string): URL {
+function readHttpBaseFromEnv(): string | undefined {
+  if (typeof process === "undefined" || !process.env) return undefined;
+  const b = process.env.WFENGINE_HTTP_BASE_URL?.trim();
+  if (!b) return undefined;
+  return b.replace(/\/$/, "");
+}
+
+/**
+ * Resolves a workflow HTTP node URL: absolute https URLs as-is; relative paths
+ * join with `WFENGINE_HTTP_BASE_URL` (e.g. `https://api.open-meteo.com`).
+ */
+export function resolveWorkflowHttpUrl(urlStr: string): string {
+  const raw = urlStr.trim();
+  if (raw.length === 0) {
+    throw new Error("HTTP request: url is empty");
+  }
+  try {
+    const u = new URL(raw);
+    if (u.protocol === "http:" || u.protocol === "https:") {
+      return u.href;
+    }
+    throw new Error(`Unsupported URL protocol: ${u.protocol}`);
+  } catch (e) {
+    if (e instanceof TypeError || (e instanceof Error && e.message.startsWith("Invalid URL"))) {
+      const base = readHttpBaseFromEnv();
+      if (base && raw.startsWith("/")) {
+        const join = new URL(raw, base.endsWith("/") ? base + "/" : base + "/");
+        if (join.protocol === "http:" || join.protocol === "https:") {
+          return join.href;
+        }
+      }
+      throw new Error(
+        `Invalid or relative HTTP url "${raw}". ` +
+          `Use a full URL (https://...) or set WFENGINE_HTTP_BASE_URL on the runner and use a path like /v1/forecast (see .env.example).`,
+      );
+    }
+    throw e;
+  }
+}
+
+function assertSafeUrlResolved(urlStr: string): URL {
   const u = new URL(urlStr);
   if (u.protocol !== "http:" && u.protocol !== "https:") {
     throw new Error(`Unsupported URL protocol: ${u.protocol}`);
@@ -32,7 +72,8 @@ export const httpRequestNode: NodeDefinition = {
   configSchema: HttpRequestConfigSchema,
   execute: async ({ config, context }) => {
     const c = config as z.infer<typeof HttpRequestConfigSchema>;
-    assertSafeUrl(c.url);
+    const resolvedUrl = resolveWorkflowHttpUrl(c.url);
+    assertSafeUrlResolved(resolvedUrl);
 
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), c.timeoutMs);
@@ -45,9 +86,9 @@ export const httpRequestNode: NodeDefinition = {
             : JSON.stringify(c.body);
       }
 
-      context.logger.info("HTTP request", { url: c.url, method: c.method });
+      context.logger.info("HTTP request", { url: resolvedUrl, method: c.method });
 
-      const res = await fetch(c.url, {
+      const res = await fetch(resolvedUrl, {
         method: c.method,
         headers: {
           "content-type": "application/json",

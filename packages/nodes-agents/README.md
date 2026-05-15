@@ -23,6 +23,7 @@ Execution remains standard **`WorkflowEngine`**: nodes receive merged **`inputDa
 
 - **`OPENAI_API_KEY`** or **`WFENGINE_OPENAI_API_KEY`** — used when node config does not set `openAiApiKey`.
 - **`WFENGINE_OPENAI_BASE_URL`** — optional base URL for compatible endpoints.
+- **Ollama without an OpenAI key:** if those keys are unset, set **`OLLAMA_BASE_URL`** or **`WFENGINE_OLLAMA_BASE_URL`** to your OpenAI-compatible base (e.g. `http://127.0.0.1:11434/v1`). Optional **`OLLAMA_MODEL`** / **`WFENGINE_OLLAMA_MODEL`**; if the node still says `gpt-4o-mini`, the runtime maps to a local Ollama model when needed.
 
 ## Gen-AI tools vs node graph (`workflow_node` + `wfengineToolOnly`)
 

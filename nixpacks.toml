@@ -1,0 +1,22 @@
+# Nixpacks configuration for Railway deployment
+# Ensures proper monorepo build order
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "npm-9_x"]
+
+[phases.install]
+cmds = [
+  "npm ci --workspace=@wfengine/shared",
+  "npm ci --workspace=@wfengine/core", 
+  "npm ci --workspace=@wfengine/nodes-base",
+  "npm ci --workspace=@wfengine/nodes-agents",
+  "npm ci --workspace=@wfengine/ui",
+  "npm ci --workspace=@wfengine/server",
+  "npm ci --workspace=examples-studio"
+]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "echo 'Override this in Railway service settings'"

@@ -1,7 +1,12 @@
 import type { AgentToolDispatch, WorkflowLogger } from "@wfengine/core";
 import type { AgentToolRef } from "../schemas.js";
 import { formatAgentOrchestrationFailure } from "./agent-failure.js";
-import { openAiChatCompletion, resolveOpenAiFromEnv, type ChatMessage } from "./openai-chat.js";
+import {
+  effectiveLlmModel,
+  openAiChatCompletion,
+  resolveOpenAiFromEnv,
+  type ChatMessage,
+} from "./openai-chat.js";
 import { runOpenAiToolLoop } from "./openai-tool-loop.js";
 import { upstreamToJsonText } from "./upstream-payload.js";
 import type { ResolvedAgentPersona } from "./resolve-agent-library.js";
@@ -36,13 +41,23 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
   transcript: { agent: string; content: string }[];
   finalAnswer: string;
 }> {
-  const { baseUrl, apiKey } = resolveOpenAiFromEnv(opts.openAi);
+  const resolved = resolveOpenAiFromEnv(opts.openAi);
+  const { baseUrl, apiKey, usedOllamaEnvFallback } = resolved;
+  const model = effectiveLlmModel(opts.model, usedOllamaEnvFallback);
+
   if (!apiKey) {
     throw formatAgentOrchestrationFailure({
       nodeType: "autogen.multi-agent",
       phase: "openai_setup",
       underlyingMessage:
-        "autogen.multi-agent: set WFENGINE_OPENAI_API_KEY or OPENAI_API_KEY on the runner, or openAiApiKey on the node",
+        "autogen.multi-agent: set WFENGINE_OPENAI_API_KEY or OPENAI_API_KEY (or openAiApiKey on the node), or set OLLAMA_BASE_URL / WFENGINE_OLLAMA_BASE_URL for self-hosted Ollama.",
+    });
+  }
+
+  if (usedOllamaEnvFallback) {
+    opts.logger.info("autogen.multi-agent: Ollama env fallback (no OpenAI API key)", {
+      baseUrl,
+      model,
     });
   }
 
@@ -109,7 +124,7 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
           ? await runOpenAiToolLoop({
               baseUrl,
               apiKey,
-              model: opts.model,
+              model,
               temperature: opts.temperature,
               timeoutMs: remaining,
               messages: [...messages],
@@ -127,7 +142,7 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
           : await openAiChatCompletion({
               baseUrl,
               apiKey,
-              model: opts.model,
+              model,
               messages: [...messages],
               temperature: opts.temperature,
               timeoutMs: remaining,

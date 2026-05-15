@@ -98,7 +98,7 @@ npm run dev:studio
 ```
 
 **Default:** **http://localhost:5173** (Vite).  
-Optional: copy `apps/studio/.env.example` to `apps/studio/.env` for `VITE_WFENGINE_API` / `VITE_WFENGINE_API_KEY`.
+Optional: from the repo root [`.env.example`](../.env.example), copy the **Studio** block (`VITE_*`) into `apps/studio/.env`.
 
 ---
 

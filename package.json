@@ -6,7 +6,7 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
-    "example": "npm run start -w examples/programmatic",
+    "example": "npm run demo -w examples/programmatic",
     "db:generate": "npm run db:generate -w @wfengine/server",
     "db:migrate": "npm run db:migrate -w @wfengine/server",
     "dev:server": "npm run dev -w @wfengine/server",

@@ -3,6 +3,7 @@ import { PassThrough } from "node:stream";
 import type { FastifyInstance } from "fastify";
 import type { NodeProgressEvent, WorkflowEngine } from "@wfengine/core";
 import { parseWorkflow, RunInlineDefinitionBodySchema } from "@wfengine/shared";
+import { ZodError } from "zod";
 
 /**
  * Execute a workflow JSON synchronously without saving a WorkflowVersion row.
@@ -12,25 +13,39 @@ export async function registerRunsInlineRoutes(
   engine: WorkflowEngine,
 ): Promise<void> {
   app.post("/runs/inline", async (request, reply) => {
-    const body = RunInlineDefinitionBodySchema.parse(request.body);
-    const execOpts =
-      body.agentLibrary !== undefined
-        ? { variables: { agentLibrary: body.agentLibrary } }
-        : {};
-    const result = body.singleNodeRun
-      ? await engine.executeSingleNode(
-          body.definition,
-          body.singleNodeRun.nodeId,
-          body.singleNodeRun.seedOutputs,
-          body.initialData ?? undefined,
-          execOpts,
-        )
-      : await engine.execute(
-          body.definition,
-          body.initialData ?? undefined,
-          execOpts,
-        );
-    reply.send(result);
+    try {
+      const body = RunInlineDefinitionBodySchema.parse(request.body);
+      const execOpts =
+        body.agentLibrary !== undefined
+          ? { variables: { agentLibrary: body.agentLibrary } }
+          : {};
+      const result = body.singleNodeRun
+        ? await engine.executeSingleNode(
+            body.definition,
+            body.singleNodeRun.nodeId,
+            body.singleNodeRun.seedOutputs,
+            body.initialData ?? undefined,
+            execOpts,
+          )
+        : await engine.execute(
+            body.definition,
+            body.initialData ?? undefined,
+            execOpts,
+          );
+      return reply.send(result);
+    } catch (err) {
+      if (err instanceof ZodError) {
+        return reply.status(400).send({
+          error: "Invalid request body",
+          issues: err.flatten(),
+        });
+      }
+      request.log.error(err);
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.status(500).send({
+        error: message,
+      });
+    }
   });
 
   /**

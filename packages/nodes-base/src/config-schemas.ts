@@ -5,7 +5,8 @@
 import { z } from "zod";
 
 export const HttpRequestConfigSchema = z.object({
-  url: z.string().url(),
+  /** Absolute `https://...` URL, or a path starting with `/` if `WFENGINE_HTTP_BASE_URL` is set on the worker. */
+  url: z.string().min(1),
   method: z
     .enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
     .optional()

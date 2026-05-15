@@ -5,6 +5,7 @@ import {
   AutogenAgentOutputSchema,
 } from "../schemas.js";
 import {
+  effectiveLlmModel,
   openAiChatCompletion,
   resolveOpenAiFromEnv,
 } from "../runtime/openai-chat.js";
@@ -92,11 +93,21 @@ export const autogenAgentNode: NodeDefinition = {
       return out;
     }
 
-    const { baseUrl, apiKey } = resolveOpenAiFromEnv(c);
+    const resolved = resolveOpenAiFromEnv(c);
+    const { baseUrl, apiKey, usedOllamaEnvFallback } = resolved;
+    const model = effectiveLlmModel(c.model, usedOllamaEnvFallback);
+
     if (!apiKey) {
       throw new Error(
-        "autogen.agent: set WFENGINE_OPENAI_API_KEY or OPENAI_API_KEY on the runner, or openAiApiKey on the node",
+        "autogen.agent: set WFENGINE_OPENAI_API_KEY or OPENAI_API_KEY or openAiApiKey on the node, or OLLAMA_BASE_URL / WFENGINE_OLLAMA_BASE_URL for Ollama fallback",
       );
+    }
+
+    if (usedOllamaEnvFallback) {
+      context.logger.info("autogen.agent: Ollama env fallback", {
+        baseUrl,
+        model,
+      });
     }
 
     const userContent = `Workflow payload:\n${upstreamToJsonText(upstream)}`;
@@ -110,7 +121,7 @@ export const autogenAgentNode: NodeDefinition = {
         ? await runOpenAiToolLoop({
             baseUrl,
             apiKey,
-            model: c.model ?? "gpt-4o-mini",
+            model,
             temperature: c.temperature ?? 0.3,
             timeoutMs: c.timeoutMs ?? 120_000,
             systemPrompt: promptText,
@@ -126,7 +137,7 @@ export const autogenAgentNode: NodeDefinition = {
         : await openAiChatCompletion({
             baseUrl,
             apiKey,
-            model: c.model ?? "gpt-4o-mini",
+            model,
             messages: [
               { role: "system", content: promptText },
               { role: "user", content: userContent },
@@ -155,7 +166,7 @@ export const autogenAgentNode: NodeDefinition = {
       success: true,
       runtime: "openai_compatible",
       agentName: c.agentName ?? "agent",
-      model: c.model ?? "gpt-4o-mini",
+      model,
       output: text,
     };
     AutogenAgentOutputSchema.parse(out);
