@@ -13,7 +13,7 @@ API_KEY=your-secret-key
 
 ### Start Command
 ```bash
-npm run db:migrate -w @wfengine/server && npm run start:combined -w @wfengine/server
+npm run db:migrate && npm run start:combined
 ```
 
 ### After Deploy
@@ -27,12 +27,12 @@ npm run db:migrate -w @wfengine/server && npm run start:combined -w @wfengine/se
 
 ### Build Command
 ```bash
-npm ci && npm run build:studio
+npm run build:studio
 ```
 
 ### Start Command
 ```bash
-npx serve apps/studio/dist -p $PORT
+npm run serve:studio
 ```
 
 ### Environment Variables

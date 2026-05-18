@@ -36,7 +36,7 @@ All necessary code changes have been pushed to GitHub. Railway will auto-deploy.
 #### Settings → Deploy
 - **Start Command:**
   ```bash
-  npm run db:migrate -w @wfengine/server && npm run start:combined -w @wfengine/server
+  npm run db:migrate && npm run start:combined
   ```
 
 #### Settings → Environment Variables
@@ -84,13 +84,13 @@ API_KEY=your-secret-api-key-change-this
 #### Settings → Build
 - **Build Command:**
   ```bash
-  npm ci && npm run build:studio
+  npm run build:studio
   ```
 
 #### Settings → Deploy
 - **Start Command:**
   ```bash
-  npx serve apps/studio/dist -p $PORT
+  npm run serve:studio
   ```
 
 #### Settings → Environment Variables
@@ -279,13 +279,13 @@ After configuration, verify:
 - **Port:** 3001
 - **Health Check:** `/health`
 - **API Docs:** `/api-docs`
-- **Start Command:** `npm run db:migrate -w @wfengine/server && npm run start:combined -w @wfengine/server`
+- **Start Command:** `npm run db:migrate && npm run start:combined`
 
 ### studio Service
 - **Purpose:** Frontend UI
 - **Port:** Assigned by Railway
 - **Build Output:** `apps/studio/dist`
-- **Start Command:** `npx serve apps/studio/dist -p $PORT`
+- **Start Command:** `npm run serve:studio`
 
 ---
 
