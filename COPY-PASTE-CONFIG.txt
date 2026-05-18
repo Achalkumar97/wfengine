@@ -1,0 +1,105 @@
+═══════════════════════════════════════════════════════════════
+  RAILWAY CONFIGURATION - COPY & PASTE GUIDE
+═══════════════════════════════════════════════════════════════
+
+📦 SERVICE 3: wfengine (Backend)
+───────────────────────────────────────────────────────────────
+
+🔧 ENVIRONMENT VARIABLES (Settings → Variables):
+───────────────────────────────────────────────────────────────
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+REDIS_URL=${{Redis.REDIS_URL}}
+PORT=3001
+NODE_ENV=production
+API_KEY=your-secret-key-change-this
+───────────────────────────────────────────────────────────────
+
+▶️ START COMMAND (Settings → Deploy → Start Command):
+───────────────────────────────────────────────────────────────
+npm run db:migrate && npm run start:combined
+───────────────────────────────────────────────────────────────
+
+✅ AFTER DEPLOY:
+1. Go to Settings → Networking
+2. Click "Generate Domain"
+3. COPY THE URL (you need it for studio!)
+4. Test: curl https://your-url/health
+
+
+═══════════════════════════════════════════════════════════════
+
+📦 SERVICE 4: studio (Frontend)
+───────────────────────────────────────────────────────────────
+
+🏗️ BUILD COMMAND (Settings → Build → Build Command):
+───────────────────────────────────────────────────────────────
+npm run build:studio
+───────────────────────────────────────────────────────────────
+
+▶️ START COMMAND (Settings → Deploy → Start Command):
+───────────────────────────────────────────────────────────────
+npm run serve:studio
+───────────────────────────────────────────────────────────────
+
+🔧 ENVIRONMENT VARIABLES (Settings → Variables):
+───────────────────────────────────────────────────────────────
+VITE_WFENGINE_API=https://your-wfengine-url-from-step-3.up.railway.app
+NODE_ENV=production
+───────────────────────────────────────────────────────────────
+
+⚠️  IMPORTANT: Replace "your-wfengine-url-from-step-3" with 
+    the actual URL you copied from wfengine service!
+
+✅ AFTER CONFIGURATION:
+1. Go to Deployments tab
+2. Click "Redeploy"
+3. Wait for deployment
+4. Go to Settings → Networking
+5. Click "Generate Domain"
+6. Open the URL in browser
+
+
+═══════════════════════════════════════════════════════════════
+
+🧪 TESTING
+───────────────────────────────────────────────────────────────
+
+Test Backend:
+curl https://your-wfengine-url.up.railway.app/health
+
+Expected: {"status":"ok"}
+
+Test Frontend:
+Open https://your-studio-url.up.railway.app in browser
+
+
+═══════════════════════════════════════════════════════════════
+
+✅ CHECKLIST
+───────────────────────────────────────────────────────────────
+
+wfengine Service:
+□ Environment variables added
+□ Start command set
+□ Public domain generated
+□ Domain URL copied
+□ Deployment successful
+□ /health endpoint returns {"status":"ok"}
+
+studio Service:
+□ Build command set
+□ Start command set
+□ VITE_WFENGINE_API set with wfengine URL
+□ NODE_ENV set to production
+□ Service redeployed
+□ Public domain generated
+□ Opens in browser without errors
+
+
+═══════════════════════════════════════════════════════════════
+
+🎉 DONE!
+
+See RAILWAY-FINAL-CONFIG.md for detailed troubleshooting.
+
+═══════════════════════════════════════════════════════════════
