@@ -9,6 +9,3 @@ cmds = ["npm ci"]
 
 [phases.build]
 cmds = ["npm run build:railway"]
-
-[start]
-cmd = "npm run db:migrate && npm run start:combined"
