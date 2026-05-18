@@ -11,4 +11,4 @@ cmds = ["npm ci"]
 cmds = ["npm run build:railway"]
 
 [start]
-cmd = "npm run start:combined"
+cmd = "npm run db:migrate && npm run start:combined"
