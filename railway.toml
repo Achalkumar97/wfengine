@@ -1,0 +1,7 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npm run db:migrate -w @wfengine/server && npm run start:combined -w @wfengine/server"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

@@ -1,0 +1,6 @@
+examples/
+packages/
+*.md
+.git/
+.turbo/
+node_modules/
