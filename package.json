@@ -2,30 +2,18 @@
   "name": "workflow-engine-sdk",
   "private": true,
   "packageManager": "npm@10.9.2",
-  "workspaces": [
-    "packages/*",
-    "apps/*",
-    "examples/*"
-  ],
+  "workspaces": ["packages/*", "apps/*", "examples/*"],
   "scripts": {
     "build": "turbo run build",
-    "build:studio": "npm run build -w examples-studio",
-    "build:server": "npm run build -w @wfengine/server",
     "test": "turbo run test",
     "example": "npm run demo -w examples/programmatic",
     "db:generate": "npm run db:generate -w @wfengine/server",
     "db:migrate": "npm run db:migrate -w @wfengine/server",
     "dev:server": "npm run dev -w @wfengine/server",
-    "dev:studio": "npm run dev -w examples-studio",
-    "start:combined": "npm run start:combined -w @wfengine/server",
-    "start:server": "npm run start -w @wfengine/server",
-    "serve:studio": "npx serve apps/studio/dist -p ${PORT:-8080}"
+    "dev:studio": "npm run dev -w examples-studio"
   },
   "devDependencies": {
     "turbo": "^2.3.3",
     "typescript": "^5.7.2"
-  },
-  "dependencies": {
-    "serve": "^14.2.6"
   }
 }

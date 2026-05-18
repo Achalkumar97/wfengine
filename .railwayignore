@@ -1,4 +1,5 @@
+# Railway should ignore these directories
 examples/
-*.md
-.git/
-.turbo/
+packages/
+
+# Only deploy from apps/

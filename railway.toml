@@ -1,7 +1,11 @@
+# Railway Monorepo Configuration
+# This file tells Railway how to build the monorepo correctly
+
 [build]
-builder = "nixpacks"
+builder = "NIXPACKS"
+buildCommand = "npm install && npm run build"
 
 [deploy]
-startCommand = "npm run db:migrate && npm run start:combined"
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
+startCommand = "echo 'Use service-specific start commands'"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
