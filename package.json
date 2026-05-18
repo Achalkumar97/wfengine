@@ -10,7 +10,11 @@
     "db:generate": "npm run db:generate -w @wfengine/server",
     "db:migrate": "npm run db:migrate -w @wfengine/server",
     "dev:server": "npm run dev -w @wfengine/server",
-    "dev:studio": "npm run dev -w examples-studio"
+    "dev:studio": "npm run dev -w examples-studio",
+    "start:api": "npm run start -w @wfengine/server",
+    "start:worker": "npm run start:worker -w @wfengine/server",
+    "start:combined": "npm run start:combined -w @wfengine/server",
+    "start:studio": "npm run preview -w examples-studio -- --host 0.0.0.0 --port ${PORT:-4173}"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

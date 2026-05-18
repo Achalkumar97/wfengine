@@ -1,5 +1,10 @@
-# Railway should ignore these directories
-examples/
-packages/
-
-# Only deploy from apps/
+# Keep workspace packages in the deployment bundle; apps depend on them at build time.
+node_modules/
+dist/
+.turbo/
+coverage/
+*.log
+.env
+.env.local
+apps/server/reports/
+**/*.tsbuildinfo
