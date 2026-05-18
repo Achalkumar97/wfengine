@@ -1,5 +1,7 @@
 # Railway should ignore these directories
 examples/
+**/.vite
+**/node_modules/.vite
 packages/
 
 # Only deploy from apps/
