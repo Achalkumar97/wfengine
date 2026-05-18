@@ -2,7 +2,11 @@
   "name": "workflow-engine-sdk",
   "private": true,
   "packageManager": "npm@10.9.2",
-  "workspaces": ["packages/*", "apps/*", "examples/*"],
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "examples/*"
+  ],
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
@@ -15,5 +19,8 @@
   "devDependencies": {
     "turbo": "^2.3.3",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "serve": "^14.2.6"
   }
 }
