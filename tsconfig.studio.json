@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./packages/core" },
+    { "path": "./packages/nodes-base" },
+    { "path": "./packages/nodes-agents" },
+    { "path": "./packages/ui" }
+  ]
+}
