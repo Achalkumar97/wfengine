@@ -15,5 +15,12 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/nodes-base" },
+    { "path": "../../packages/nodes-agents" },
+    { "path": "../../packages/ui" }
+  ]
 }
