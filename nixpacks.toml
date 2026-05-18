@@ -8,7 +8,7 @@ nixPkgs = ["nodejs_20"]
 cmds = ["npm ci"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = ["npm run build:railway"]
 
 [start]
 cmd = "npm run start:combined"

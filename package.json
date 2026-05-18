@@ -5,6 +5,7 @@
   "workspaces": ["packages/*", "apps/*", "examples/*"],
   "scripts": {
     "build": "turbo run build",
+    "build:railway": "find packages apps -name tsconfig.tsbuildinfo -delete && turbo run build",
     "test": "turbo run test",
     "example": "npm run demo -w examples/programmatic",
     "db:generate": "npm run db:generate -w @wfengine/server",
