@@ -18,7 +18,8 @@
     "dev:server": "npm run dev -w @wfengine/server",
     "dev:studio": "npm run dev -w examples-studio",
     "start:combined": "npm run start:combined -w @wfengine/server",
-    "start:server": "npm run start -w @wfengine/server"
+    "start:server": "npm run start -w @wfengine/server",
+    "serve:studio": "npx serve apps/studio/dist -p ${PORT:-8080}"
   },
   "devDependencies": {
     "turbo": "^2.3.3",
