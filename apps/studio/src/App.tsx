@@ -161,10 +161,17 @@ export default function App(): ReactElement {
     () => (tabs ?? []).map((t) => ({ nodes: t.nodes })),
     [tabs],
   );
-  const localWorkspaces = useMemo(
-    () => (libraryOpen ? listWorkspaces() : []),
-    [libraryOpen, libraryRefresh],
-  );
+  const localWorkspaces = useMemo(() => {
+    if (!libraryOpen) return { items: [], error: null };
+    try {
+      return { items: listWorkspaces(), error: null };
+    } catch (e) {
+      return {
+        items: [],
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  }, [libraryOpen, libraryRefresh]);
 
   useEffect(() => {
     if (!libraryOpen) return;
@@ -1306,9 +1313,13 @@ export default function App(): ReactElement {
                 </button>
               </div>
 
-              {localWorkspaces.length ? (
+              {localWorkspaces.error ? (
+                <div className="px-4 py-6 text-sm text-rose-300">
+                  {localWorkspaces.error}
+                </div>
+              ) : localWorkspaces.items.length ? (
                 <div className="max-h-[52vh] overflow-auto">
-                  {localWorkspaces.map((m) => (
+                  {localWorkspaces.items.map((m) => (
                     <div
                       key={m.id}
                       className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] px-4 py-3 first:border-t-0"

@@ -67,8 +67,56 @@ export type WorkflowVersionRow = {
   workflow?: WorkflowRow;
 };
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function parseWorkflowRow(value: unknown): WorkflowRow | null {
+  const o = asRecord(value);
+  if (!o || typeof o.id !== "string" || typeof o.name !== "string") {
+    return null;
+  }
+  const versions = Array.isArray(o.versions)
+    ? o.versions
+        .map((v) => {
+          const row = asRecord(v);
+          if (
+            !row ||
+            typeof row.id !== "string" ||
+            typeof row.versionNumber !== "number"
+          ) {
+            return null;
+          }
+          return {
+            id: row.id,
+            versionNumber: row.versionNumber,
+            label: typeof row.label === "string" ? row.label : null,
+            createdAt:
+              typeof row.createdAt === "string" ? row.createdAt : undefined,
+          };
+        })
+        .filter((v): v is NonNullable<typeof v> => v !== null)
+    : undefined;
+  return {
+    id: o.id,
+    name: o.name,
+    meta: o.meta,
+    createdAt: typeof o.createdAt === "string" ? o.createdAt : undefined,
+    updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : undefined,
+    versions,
+  };
+}
+
 export async function listServerWorkflows(): Promise<WorkflowRow[]> {
-  return await request<WorkflowRow[]>("/workflows", { method: "GET" });
+  const body = await request<unknown>("/workflows", { method: "GET" });
+  if (!Array.isArray(body)) {
+    throw new Error(
+      "Workflow API did not return a workflow list. Check VITE_WFENGINE_API.",
+    );
+  }
+  return body.map(parseWorkflowRow).filter((v): v is WorkflowRow => v !== null);
 }
 
 export async function createServerWorkflow(name: string, meta?: unknown): Promise<WorkflowRow> {
@@ -99,4 +147,3 @@ export async function getServerWorkflowVersion(versionId: string): Promise<Workf
     { method: "GET" },
   );
 }
-
