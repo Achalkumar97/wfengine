@@ -6,6 +6,3 @@ cmds = ["npm ci"]
 
 [phases.build]
 cmds = ["npm run build"]
-
-[start]
-cmd = "npm run db:migrate -w @wfengine/server && npm run start:combined -w @wfengine/server"
