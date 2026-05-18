@@ -1,5 +1,6 @@
 # Railway should ignore these directories
 examples/
+apps/studio/
 **/.vite
 **/node_modules/.vite
 packages/
