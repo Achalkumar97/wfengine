@@ -43,5 +43,8 @@ export default defineConfig(({ mode }) => {
         "/health": { target, changeOrigin: true },
       },
     },
+    preview: {
+      allowedHosts: [".up.railway.app"],
+    },
   };
 });
