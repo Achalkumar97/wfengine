@@ -1,0 +1,33 @@
+{
+  "name": "@wfengine/nodes-agents",
+  "version": "0.1.0",
+  "description": "Multi-agent AI nodes (MAF-style orchestration + AutoGen bridges) for wfengine",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schemas": {
+      "types": "./dist/schemas.d.ts",
+      "import": "./dist/schemas.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@wfengine/core": "^0.1.0",
+    "@wfengine/nodes-base": "^0.1.0",
+    "@wfengine/shared": "^0.1.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.2"
+  }
+}

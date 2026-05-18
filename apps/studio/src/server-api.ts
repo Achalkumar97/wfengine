@@ -1,5 +1,3 @@
-type ApiErrorBody = { error?: unknown };
-
 function apiBase(): string {
   const raw = import.meta.env.VITE_WFENGINE_API ?? "";
   return raw.replace(/\/$/, "");
@@ -21,16 +19,26 @@ async function readJsonOrText(res: Response): Promise<unknown> {
   }
 }
 
+function errorMessageFromBody(status: number, body: unknown): string {
+  if (typeof body === "object" && body !== null) {
+    const o = body as Record<string, unknown>;
+    if (typeof o.message === "string" && o.message.trim().length > 0) {
+      return o.message;
+    }
+    if (typeof o.error === "string" && o.error.length > 0) {
+      return o.error;
+    }
+  }
+  if (typeof body === "string" && body.trim().length > 0) return body;
+  return `${status} ${status === 500 ? "Internal Server Error" : "Request failed"}`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${apiBase()}${path}`;
   const res = await fetch(url, { ...init, headers: { ...authHeaders(), ...(init?.headers ?? {}) } });
   const body = await readJsonOrText(res);
   if (!res.ok) {
-    const msg =
-      typeof body === "object" && body !== null && "error" in body
-        ? String((body as ApiErrorBody).error ?? res.statusText)
-        : `${res.status} ${res.statusText}`;
-    throw new Error(msg);
+    throw new Error(errorMessageFromBody(res.status, body));
   }
   return body as T;
 }

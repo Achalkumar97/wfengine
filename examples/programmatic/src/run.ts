@@ -1,10 +1,12 @@
 import { WorkflowEngine } from "@wfengine/core";
 import type { WorkflowDefinition } from "@wfengine/shared";
 import { registerBuiltinNodes } from "@wfengine/nodes-base";
+import { registerAgentNodes } from "@wfengine/nodes-agents";
 
 async function main(): Promise<void> {
   const engine = new WorkflowEngine();
   registerBuiltinNodes(engine);
+  registerAgentNodes(engine);
 
   const workflow: WorkflowDefinition = {
     id: "wf-demo",

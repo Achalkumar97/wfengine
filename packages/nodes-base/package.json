@@ -13,6 +13,14 @@
     "./config-schemas": {
       "types": "./dist/config-schemas.d.ts",
       "import": "./dist/config-schemas.js"
+    },
+    "./utils/validation": {
+      "types": "./dist/utils/validation.d.ts",
+      "import": "./dist/utils/validation.js"
+    },
+    "./utils/validation.js": {
+      "types": "./dist/utils/validation.d.ts",
+      "import": "./dist/utils/validation.js"
     }
   },
   "files": ["dist"],

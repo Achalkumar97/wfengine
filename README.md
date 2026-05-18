@@ -2,6 +2,8 @@
 
 Developer-first workflow automation libraries: run **JSON DAG workflows** in Node.js with a plugin-style **node registry**, optional **REST + Postgres + BullMQ** execution service, and optional **React Flow** visual builder.
 
+**Extended docs:** [docs/README.md](./docs/README.md) (full stack, architecture diagrams, file tree, install/run). **Deploy:** [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) (Studio + API + worker).
+
 ## Repository layout
 
 | Area | Path |
@@ -274,7 +276,7 @@ Dark-mode **workflow editor**: resizable library / canvas / inspector, searchabl
 
 **Import** always applies JSON into a **new** tab so you do not overwrite another workflow by mistake.
 
-With API + env: copy [`apps/studio/.env.example`](apps/studio/.env.example); leave `VITE_WFENGINE_API` empty to use the Vite proxy to `localhost:30001`, or set the URL explicitly. Set **`VITE_WFENGINE_API_KEY`** when the server uses **`API_KEY`**. **`Test Node`** per step is left for a follow-up hook into `engine.execute` slices.
+With API + env: from [`.env.example`](.env.example), copy the **Studio** `VITE_*` lines into `apps/studio/.env`. Leave `VITE_WFENGINE_API` empty to use the Vite proxy to `localhost:30001`, or set the URL explicitly. Set **`VITE_WFENGINE_API_KEY`** when the server uses **`API_KEY`**. **`Test Node`** per step is left for a follow-up hook into `engine.execute` slices.
 
 ## Scripts (repo root)
 

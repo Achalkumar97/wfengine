@@ -3,6 +3,7 @@ export {
   type WorkflowCanvasProps,
   type WorkflowCanvasHandle,
   type InspectorRenderProps,
+  type InspectorAgentLibraryEntry,
   type InspectorMainTab,
 } from "./WorkflowCanvas.js";
 export {
@@ -19,3 +20,15 @@ export {
   turboNodeTitle,
 } from "./nodeLabels.js";
 export { layoutNodesDagre } from "./dagreLayout.js";
+export {
+  deriveAgentBucketRows,
+  isAgentBucketNodeType,
+  supportsCanvasAgentAdd,
+  type AgentBucketRow,
+  type AgentLibraryEntryLite,
+} from "./agentCanvasBucket.js";
+export {
+  CanvasAgentUiProvider,
+  useCanvasAgentUi,
+  type CanvasAgentUiValue,
+} from "./CanvasAgentUiContext.js";

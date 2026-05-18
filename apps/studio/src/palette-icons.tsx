@@ -1,5 +1,6 @@
 import type { PaletteNodeMeta } from "@wfengine/ui";
 import {
+  Bot,
   CircleDot,
   Clock,
   Database,
@@ -11,8 +12,10 @@ import {
   ListTree,
   Mail,
   MessageSquare,
+  Network,
   Sparkles,
   TestTube,
+  UsersRound,
   Webhook,
   type LucideIcon,
 } from "lucide-react";
@@ -33,6 +36,9 @@ const MAP: Record<string, LucideIcon> = {
   "list-tree": ListTree,
   "test-tube": TestTube,
   sparkles: Sparkles,
+  bot: Bot,
+  "users-round": UsersRound,
+  network: Network,
 };
 
 export function PaletteGlyph(props: { meta: PaletteNodeMeta }): ReactElement {

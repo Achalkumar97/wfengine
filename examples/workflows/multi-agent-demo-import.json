@@ -1,0 +1,37 @@
+{
+  "id": "multi-agent-demo",
+  "version": 1,
+  "_comment": "Import in Studio. Requires OPENAI_API_KEY or WFENGINE_OPENAI_API_KEY on the runner (or openAiApiKey in node config). Initial data can be {}.",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "agent-group",
+      "type": "mfa.agent-group",
+      "config": {
+        "groupName": "Demo MAF-style group",
+        "orchestrationMode": "sequential",
+        "model": "gpt-4o-mini",
+        "temperature": 0.3,
+        "timeoutMs": 120000,
+        "taskInstructions": "Keep answers concise for a live demo.",
+        "agents": [
+          {
+            "name": "researcher",
+            "role": "analysis",
+            "systemPrompt": "Given the merged workflow JSON payload, respond with exactly three bullet points summarizing what it contains."
+          },
+          {
+            "name": "reviewer",
+            "role": "critique",
+            "systemPrompt": "Review the researcher's bullets and add one sentence on gaps or risks."
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [{ "source": "start", "target": "agent-group" }]
+}

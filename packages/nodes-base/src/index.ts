@@ -1,3 +1,11 @@
+export {
+  UpstreamValidationFailedSchema,
+  validateRequiredFields,
+  type UpstreamValidationFailed,
+  type ValidateRequiredFieldsOptions,
+  type ValidateRequiredFieldsResult,
+} from "./utils/validation.js";
+
 import type { WorkflowEngine } from "@wfengine/core";
 import {
   EmailReadMessageSchema,

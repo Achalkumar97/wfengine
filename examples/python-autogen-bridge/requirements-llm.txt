@@ -1,0 +1,2 @@
+# Optional: LLM client (OpenAI + Ollama-compatible)
+openai>=1.40.0,<2

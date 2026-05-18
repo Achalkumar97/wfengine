@@ -39,13 +39,17 @@ export const fileWriteNode: NodeDefinition = {
   execute: async ({ config, inputData, context }) => {
     const c = FileWriteConfigSchema.parse(config);
     const base = c.baseDir ?? process.cwd();
-    const target = resolveSafePath(c.path, base);
+    const mergedIn = inputData as Record<string, unknown>;
+    const rawPath =
+      c.interpolatePathFromInput === true
+        ? interpolateTemplate(c.path, mergedIn)
+        : c.path;
+    const target = resolveSafePath(rawPath, base);
 
     if (c.createDirs) {
       await mkdir(path.dirname(target), { recursive: true });
     }
 
-    const mergedIn = inputData as Record<string, unknown>;
     const rawContent =
       c.encoding === "utf8" && c.interpolateContentFromInput
         ? interpolateTemplate(c.content, mergedIn)

@@ -6,6 +6,7 @@ import type { OpenAPIV3_1 } from "openapi-types";
 import type { PrismaClient } from "@prisma/client";
 import type { WorkflowEngine } from "@wfengine/core";
 import type { Queue } from "bullmq";
+import { ZodError } from "zod";
 import type { JobPayload } from "./queue.js";
 import { verifyApiKey } from "./auth.js";
 import { openApiRoot } from "./openapi.js";
@@ -22,6 +23,43 @@ export async function buildApp(deps: {
   apiKey?: string | undefined;
 }): Promise<ReturnType<typeof Fastify>> {
   const app = Fastify({ logger: true });
+
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof ZodError) {
+      const message = error.issues
+        .map((i) =>
+          i.path.length > 0 ? `${i.path.join(".")}: ${i.message}` : i.message,
+        )
+        .join("; ");
+      return reply.status(400).send({
+        error: "Validation failed",
+        message,
+      });
+    }
+
+    const statusCode =
+      typeof (error as { statusCode?: number }).statusCode === "number"
+        ? (error as { statusCode: number }).statusCode
+        : 500;
+    const msg = error instanceof Error ? error.message : String(error);
+    if (statusCode >= 500) {
+      request.log.error(error);
+    }
+    const generic =
+      statusCode === 400
+        ? "Bad Request"
+        : statusCode === 401
+          ? "Unauthorized"
+          : statusCode === 404
+            ? "Not Found"
+            : statusCode >= 500
+              ? "Internal Server Error"
+              : "Error";
+    return reply.status(statusCode).send({
+      error: generic,
+      message: msg,
+    });
+  });
 
   await app.register(cors, { origin: true });
 

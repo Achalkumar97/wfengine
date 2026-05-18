@@ -11,7 +11,9 @@ export interface PaletteNodeMeta {
     | "Data"
     | "Integrations"
     | "GitHub"
-    | "Testing";
+    | "Testing"
+    | "Multi-Agent"
+    | "AI Agents";
   icon?: string;
   /** Default JSON-serializable config */
   defaultConfig?: Record<string, unknown>;
