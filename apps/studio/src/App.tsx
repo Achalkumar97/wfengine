@@ -163,6 +163,54 @@ export default function App(): ReactElement {
 
   const activeTab = tabs?.find((t) => t.tabId === activeTabId);
 
+  const saveActiveTabSilently = useCallback(() => {
+    const el = canvasRef.current;
+    if (!el || !activeTabId) return;
+    const wf = tabs?.find((t) => t.tabId === activeTabId);
+    if (!wf) return;
+    const nodes = el.getNodes();
+    const edges = el.getEdges();
+
+    const wid = wf.localWorkspaceId ?? `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    saveWorkspace(wid, {
+      title: wf.workflowId || "untitled",
+      workflowId: wf.workflowId,
+      workflowDescription: wf.workflowDescription,
+      initialDataRaw: wf.initialDataRaw,
+      nodes,
+      edges,
+    });
+
+    saveStudioSnapshot({
+      workflowId: wf.workflowId,
+      workflowDescription: wf.workflowDescription,
+      initialDataRaw: wf.initialDataRaw,
+      nodes,
+      edges,
+    });
+    setTabs((prev) =>
+      (prev ?? []).map((t) =>
+        t.tabId === activeTabId
+          ? { ...t, localWorkspaceId: wid, dirty: false, savedAt: new Date().toISOString() }
+          : t,
+      ),
+    );
+  }, [activeTabId, tabs]);
+
+  const onSaveToBrowser = useCallback(() => {
+    saveActiveTabSilently();
+    toast.success("Saved to this browser — survives refresh");
+  }, [saveActiveTabSilently]);
+
+  // Auto-save on refresh/close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveActiveTabSilently();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [saveActiveTabSilently]);
+
   // ── Async run (POST /runs + SSE) ──────────────────────────────────────────
   const asyncRun = useAsyncRun({
     onNodeStarted: (nodeId, nodeType) => {
@@ -486,53 +534,6 @@ export default function App(): ReactElement {
     toast.success("Workflow exported");
   }, [activeTab?.workflowId]);
 
-  const saveActiveTabSilently = useCallback(() => {
-    const el = canvasRef.current;
-    if (!el || !activeTabId) return;
-    const wf = tabs?.find((t) => t.tabId === activeTabId);
-    if (!wf) return;
-    const nodes = el.getNodes();
-    const edges = el.getEdges();
-
-    const wid = wf.localWorkspaceId ?? `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    saveWorkspace(wid, {
-      title: wf.workflowId || "untitled",
-      workflowId: wf.workflowId,
-      workflowDescription: wf.workflowDescription,
-      initialDataRaw: wf.initialDataRaw,
-      nodes,
-      edges,
-    });
-
-    saveStudioSnapshot({
-      workflowId: wf.workflowId,
-      workflowDescription: wf.workflowDescription,
-      initialDataRaw: wf.initialDataRaw,
-      nodes,
-      edges,
-    });
-    setTabs((prev) =>
-      (prev ?? []).map((t) =>
-        t.tabId === activeTabId
-          ? { ...t, localWorkspaceId: wid, dirty: false, savedAt: new Date().toISOString() }
-          : t,
-      ),
-    );
-  }, [activeTabId, tabs]);
-
-  const onSaveToBrowser = useCallback(() => {
-    saveActiveTabSilently();
-    toast.success("Saved to this browser — survives refresh");
-  }, [saveActiveTabSilently]);
-
-  // Auto-save on refresh/close
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      saveActiveTabSilently();
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [saveActiveTabSilently]);
 
   const runWorkflow = useCallback(async () => {
     const el = canvasRef.current;
