@@ -25,7 +25,11 @@ function apiBase(): string {
     runtimeConfig().VITE_WFENGINE_API,
     import.meta.env.VITE_WFENGINE_API,
   );
-  return raw.replace(/\/$/, "");
+  const base = raw.replace(/\/$/, "");
+  if (base && !/^https?:\/\//i.test(base)) {
+    return `https://${base}`;
+  }
+  return base;
 }
 
 function authHeaders(): Record<string, string> {
