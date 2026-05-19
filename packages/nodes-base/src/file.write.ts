@@ -65,6 +65,11 @@ export const fileWriteNode: NodeDefinition = {
 
     context.logger.info("file.write", { path: target, append: c.append });
 
+    // Abort check — don't write if execution was cancelled.
+    if (context.signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+
     if (c.append) {
       await writeFile(target, payload, { flag: "a" });
     } else {

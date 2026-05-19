@@ -148,9 +148,10 @@ export const autogenAgentNode: NodeDefinition = {
             executionContext: {
               executionId: context.executionId,
               workflowId: context.workflowId,
-              nodeId: context.executionId, // nodeId is in child logger bindings
+              nodeId: context.executionId,
               agentName: c.agentName ?? "agent",
             },
+            signal: context.signal,
           })
         : await openAiChatCompletion({
             provider,

@@ -44,6 +44,8 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
     workflowId?: string;
     nodeId?: string;
   } | undefined;
+  /** Forwarded from WorkflowExecutionContext — abort on user Stop. */
+  signal?: AbortSignal | undefined;
 }): Promise<{
   transcript: { agent: string; content: string }[];
   finalAnswer: string;
@@ -130,6 +132,15 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
   const n = opts.agents.length;
 
   for (let turn = 0; turn < opts.maxTurns; turn++) {
+    // Check abort signal before each agent turn so Stop takes effect quickly.
+    if (opts.signal?.aborted) {
+      dbg.info("autogen.multi-agent: abort signal received — stopping orchestration", {
+        turn,
+        completedTurns: transcript.length,
+      });
+      throw new DOMException("Aborted", "AbortError");
+    }
+
     const agent = opts.agents[turn % n]!;
     const elapsed = Date.now() - orchestrationStartedAt;
     const remaining = Math.max(5_000, opts.timeoutMs - elapsed);
@@ -198,6 +209,7 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
                 nodeId: opts.executionContext?.nodeId,
                 agentName: agent.name,
               },
+              signal: opts.signal,
             })
           : await openAiChatCompletion({
               provider,

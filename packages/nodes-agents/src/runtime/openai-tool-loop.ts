@@ -202,6 +202,8 @@ export async function runOpenAiToolLoop(opts: {
     nodeId?: string;
     agentName?: string;
   } | undefined;
+  /** Forwarded AbortSignal — aborts in-flight fetches and skips pending tools. */
+  signal?: AbortSignal | undefined;
 }): Promise<string> {
   const maxIterations = Math.min(Math.max(opts.maxIterations ?? 16, 1), 32);
   const specs = buildToolOpenAiSpecs(opts.tools);
@@ -253,6 +255,12 @@ export async function runOpenAiToolLoop(opts: {
   let anyToolRoundCompletedOk = false;
 
   for (let iter = 0; iter < maxIterations; iter++) {
+    // ── Abort check (top of iteration) ─────────────────────────────────────
+    if (opts.signal?.aborted) {
+      dbg.info("===== ABORT SIGNAL — stopping tool loop =====", { turn: iter });
+      throw new DOMException("Aborted", "AbortError");
+    }
+    // ──────────────────────────────────────────────────────────────────────
     const elapsed = Date.now() - loopStartedAt;
     const remaining = Math.max(5_000, opts.timeoutMs - elapsed);
     const roundBudget =
@@ -313,9 +321,12 @@ export async function runOpenAiToolLoop(opts: {
       remainingMs: remaining,
     });
 
-    // ── AbortController + timeout ─────────────────────────────────────────
+    // ── AbortController + timeout ──────────────────────────────────────
     const ac = new AbortController();
     let timedOut = false;
+    // Link parent cancellation signal so Stop aborts the in-flight fetch.
+    const onParentAbort = () => ac.abort();
+    opts.signal?.addEventListener("abort", onParentAbort, { once: true });
     const timer = setTimeout(() => {
       timedOut = true;
       // ── TIMEOUT ────────────────────────────────────────────────────────
@@ -401,6 +412,7 @@ export async function runOpenAiToolLoop(opts: {
       );
     } finally {
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onParentAbort);
     }
 
     // ── Parse response ────────────────────────────────────────────────────
@@ -501,6 +513,17 @@ export async function runOpenAiToolLoop(opts: {
       let batchToolError: string | undefined;
 
       for (const call of msg.tool_calls) {
+        // ── Pre-tool abort check ──────────────────────────────────────────
+        // Prevents email/file-write tools from starting after user presses Stop.
+        if (opts.signal?.aborted) {
+          dbg.info("===== ABORT SIGNAL — skipping tool dispatch =====", {
+            turn: iter,
+            toolCallId: call.id,
+            toolName: call.function.name,
+          });
+          throw new DOMException("Aborted", "AbortError");
+        }
+        // ────────────────────────────────────────────────────────────
         const fn = call.function.name;
         const match = /^wfengine_fn_(\d+)$/.exec(fn);
         const idx = match ? Number.parseInt(match[1]!, 10) : -1;

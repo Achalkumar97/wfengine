@@ -57,6 +57,7 @@ export async function runMfaAgentGroupOrchestration(opts: {
   config: GroupCfg;
   upstream: Record<string, unknown>;
   logger: WorkflowLogger;
+  signal?: AbortSignal | undefined;
 }): Promise<{
   transcript: { agent: string; content: string }[];
   finalAnswer: string;
@@ -169,6 +170,13 @@ export async function runMfaAgentGroupOrchestration(opts: {
 
   const agentList = opts.config.agents as Persona[];
   for (let stepIndex = 0; stepIndex < agentList.length; stepIndex++) {
+    // Abort check before each agent turn
+    if (opts.signal?.aborted) {
+      opts.logger.info("mfa.agent-group: abort signal received — stopping", {
+        completedTurns: transcript.length,
+      });
+      throw new DOMException("Aborted", "AbortError");
+    }
     const agent = agentList[stepIndex]!;
     const elapsed = Date.now() - started;
     remaining = Math.max(5_000, (opts.config.timeoutMs ?? 180_000) - elapsed);

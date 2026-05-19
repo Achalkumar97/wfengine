@@ -193,6 +193,7 @@ export const autogenMultiAgentNode: NodeDefinition = {
         workflowId: context.workflowId,
         nodeId,
       },
+      signal: context.signal,
     });
 
     const wfNodeTools = (c.tools ?? []).filter((t) => t.kind === "workflow_node");

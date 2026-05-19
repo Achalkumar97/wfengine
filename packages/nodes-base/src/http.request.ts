@@ -76,6 +76,9 @@ export const httpRequestNode: NodeDefinition = {
     assertSafeUrlResolved(resolvedUrl);
 
     const controller = new AbortController();
+    // Link parent cancellation so Stop aborts this HTTP request immediately.
+    const onAbort = () => controller.abort();
+    context.signal?.addEventListener("abort", onAbort, { once: true });
     const t = setTimeout(() => controller.abort(), c.timeoutMs);
     try {
       let body: string | undefined;
@@ -124,6 +127,7 @@ export const httpRequestNode: NodeDefinition = {
       };
     } finally {
       clearTimeout(t);
+      context.signal?.removeEventListener("abort", onAbort);
     }
   },
 };

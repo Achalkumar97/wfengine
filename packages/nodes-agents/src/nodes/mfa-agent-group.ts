@@ -68,6 +68,7 @@ export const mfaAgentGroupNode: NodeDefinition = {
         },
         upstream,
         logger: context.logger,
+        signal: context.signal,
       });
 
     const out = {

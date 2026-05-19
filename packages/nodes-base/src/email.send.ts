@@ -439,6 +439,12 @@ export const emailSendNode: NodeDefinition = {
         serializedSizeChars: serializedSize,
       });
 
+      // Abort check — if user pressed Stop before SMTP DATA phase, skip send.
+      if (context.signal?.aborted) {
+        context.logger.info("[EMAIL] PHASE 5: skipped — execution was cancelled");
+        throw new DOMException("Aborted", "AbortError");
+      }
+
       const sendStart = Date.now();
       let info: Awaited<ReturnType<typeof transporter.sendMail>>;
 
