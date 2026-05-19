@@ -44,6 +44,8 @@ import { PaletteGlyph } from "./palette-icons.js";
 import { RunInspectorPanel, type LiveRunStep } from "./RunInspectorPanel.js";
 import { WorkflowInspectorPanel } from "./WorkflowInspectorPanel.js";
 import {
+  apiBase,
+  authHeaders,
   createServerWorkflow,
   createServerWorkflowVersion,
   getServerWorkflowVersion,
@@ -59,11 +61,6 @@ import {
   saveStudioSnapshot,
 } from "./studio-persistence.js";
 import type { Edge, Node } from "reactflow";
-
-function apiBase(): string {
-  const raw = import.meta.env.VITE_WFENGINE_API ?? "";
-  return raw.replace(/\/$/, "");
-}
 
 type StudioTab = {
   tabId: string;
@@ -446,13 +443,7 @@ export default function App(): ReactElement {
 
     const base = apiBase();
     const url = `${base}/runs/inline/stream`;
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    };
-    const key = import.meta.env.VITE_WFENGINE_API_KEY;
-    if (key) {
-      headers["x-api-key"] = key;
-    }
+    const headers = authHeaders();
 
     setRunBusy(true);
     setRunError(null);
@@ -624,13 +615,7 @@ export default function App(): ReactElement {
 
       const base = apiBase();
       const url = `${base}/runs/inline/stream`;
-      const headers: Record<string, string> = {
-        "content-type": "application/json",
-      };
-      const key = import.meta.env.VITE_WFENGINE_API_KEY;
-      if (key) {
-        headers["x-api-key"] = key;
-      }
+      const headers = authHeaders();
 
       const nodeMeta = definition.nodes.find((n) => n.id === nodeId);
       setRunBusy(true);

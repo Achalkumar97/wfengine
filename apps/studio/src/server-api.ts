@@ -20,7 +20,7 @@ function firstNonEmpty(...values: Array<string | undefined>): string {
   return "";
 }
 
-function apiBase(): string {
+export function apiBase(): string {
   const raw = firstNonEmpty(
     runtimeConfig().VITE_WFENGINE_API,
     import.meta.env.VITE_WFENGINE_API,
@@ -32,7 +32,7 @@ function apiBase(): string {
   return base;
 }
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { "content-type": "application/json" };
   const key = firstNonEmpty(
     runtimeConfig().VITE_WFENGINE_API_KEY,
