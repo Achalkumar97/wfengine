@@ -72,17 +72,23 @@ export async function registerRunsInlineRoutes(
       if (!abort.signal.aborted) {
         request.log.info(
           { executionId },
-          "Client disconnected — aborting inline run",
+          "[CANCEL] Client disconnected — aborting inline run",
         );
         abort.abort();
       }
     };
 
-    // Node's IncomingMessage fires 'close' when the socket is fully closed.
-    request.raw.on("close", onClientClose);
+    // In a Fastify streaming response, request.raw (IncomingMessage) does NOT
+    // reliably emit 'close' when the client aborts. Listen on ALL three surfaces
+    // so at least one fires immediately when the browser closes the connection.
+    const sock = request.raw.socket;
+    sock?.on("close", onClientClose);
+    request.raw.on("close", onClientClose);  // fallback
+    // reply.raw is available after reply.send() — attach after pump starts
 
-    // Clean up listener once we're done (success or error).
+    // Clean up all listeners once done (success, error, or abort).
     const cleanup = () => {
+      sock?.off("close", onClientClose);
       request.raw.off("close", onClientClose);
     };
     // ────────────────────────────────────────────────────────────────────────

@@ -405,6 +405,13 @@ export async function runOpenAiToolLoop(opts: {
       ) {
         throw err;
       }
+      // Propagate abort cleanly without re-wrapping.
+      if (
+        (err instanceof DOMException && err.name === "AbortError") ||
+        (err instanceof Error && err.name === "AbortError")
+      ) {
+        throw err;
+      }
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(
         `${opts.provider} tool-loop chat completion request failed at ${url}: ${message}`,

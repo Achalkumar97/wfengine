@@ -206,6 +206,13 @@ export async function runMfaAgentGroupOrchestration(opts: {
         stepIndex,
       });
     } catch (rawErr) {
+      // Propagate abort cleanly — do NOT wrap as an agent failure.
+      if (
+        (rawErr instanceof DOMException && rawErr.name === "AbortError") ||
+        (rawErr instanceof Error && rawErr.name === "AbortError")
+      ) {
+        throw rawErr;
+      }
       const underlyingMessage =
         rawErr instanceof Error ? rawErr.message : String(rawErr);
       const underlyingStack =

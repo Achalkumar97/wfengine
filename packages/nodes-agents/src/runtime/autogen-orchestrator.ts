@@ -252,6 +252,13 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
         transcriptLength: transcript.length,
       });
     } catch (raw) {
+      // Propagate abort cleanly — do NOT wrap as an agent failure.
+      if (
+        (raw instanceof DOMException && raw.name === "AbortError") ||
+        (raw instanceof Error && raw.name === "AbortError")
+      ) {
+        throw raw;
+      }
       const underlyingMessage =
         raw instanceof Error ? raw.message : String(raw);
       const underlyingStack =

@@ -101,7 +101,7 @@ export interface ExecuteOptions {
 
 /** Result of a finished workflow run */
 export interface WorkflowExecuteResult {
-  status: "completed" | "failed" | "partial";
+  status: "completed" | "failed" | "partial" | "cancelled";
   executionId: string;
   workflowId: string;
   /** Successful output per node id (includes failure placeholders when continuing) */

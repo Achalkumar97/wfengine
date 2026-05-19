@@ -262,7 +262,10 @@ export class WorkflowEngine {
 
     const failedKeys = Object.keys(errors);
     let status: WorkflowExecuteResult["status"];
-    if (failedKeys.length === 0) {
+    if (ctx.signal?.aborted && failedKeys.length > 0) {
+      // If the run was aborted and the only errors are from the abort, mark cancelled.
+      status = "cancelled";
+    } else if (failedKeys.length === 0) {
       status = "completed";
     } else if (onNodeError === "continue") {
       status = "partial";
