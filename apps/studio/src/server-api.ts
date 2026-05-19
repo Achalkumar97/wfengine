@@ -1,11 +1,28 @@
+type RuntimeStudioConfig = {
+  VITE_WFENGINE_API?: string;
+  VITE_WFENGINE_API_KEY?: string;
+};
+
+function runtimeConfig(): RuntimeStudioConfig {
+  if (typeof window === "undefined") return {};
+  return (
+    (window as typeof window & {
+      __WFENGINE_STUDIO_CONFIG__?: RuntimeStudioConfig;
+    }).__WFENGINE_STUDIO_CONFIG__ ?? {}
+  );
+}
+
 function apiBase(): string {
-  const raw = import.meta.env.VITE_WFENGINE_API ?? "";
+  const raw =
+    runtimeConfig().VITE_WFENGINE_API ?? import.meta.env.VITE_WFENGINE_API ?? "";
   return raw.replace(/\/$/, "");
 }
 
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { "content-type": "application/json" };
-  const key = import.meta.env.VITE_WFENGINE_API_KEY;
+  const key =
+    runtimeConfig().VITE_WFENGINE_API_KEY ??
+    import.meta.env.VITE_WFENGINE_API_KEY;
   if (key) h["x-api-key"] = key;
   return h;
 }

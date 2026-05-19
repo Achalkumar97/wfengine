@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 
 const thisDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(thisDir, "../..");
 
 /**
  * Dev proxy: Studio calls `/runs/*` relative to Vite; forwards to the wfengine API.
@@ -29,16 +30,23 @@ function resolveDevApiPort(env: Record<string, string>): string {
 }
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, thisDir, "");
+  const env = {
+    ...loadEnv(mode, repoRoot, ""),
+    ...loadEnv(mode, thisDir, ""),
+  };
   const port = resolveDevApiPort(env);
   const target = `http://127.0.0.1:${port}`;
 
   return {
+    envDir: repoRoot,
     // Hoisted workspace `vite` vs `apps/studio/node_modules/vite` — duplicate types; runtime is fine.
     plugins: [tailwindcss(), react()].flat() as PluginOption[],
     server: {
       port: 5173,
       proxy: {
+        "/workflows": { target, changeOrigin: true },
+        "/workflow-versions": { target, changeOrigin: true },
+        "/executions": { target, changeOrigin: true },
         "/runs": { target, changeOrigin: true },
         "/health": { target, changeOrigin: true },
       },
