@@ -956,3 +956,350 @@ If `oversized: true` or `resultChars` is very large, the tool result is bloating
 | `packages/nodes-agents/src/runtime/autogen-orchestrator.ts` | **Updated** — per-turn logs, `executionContext` forwarded to tool loop |
 | `packages/nodes-agents/src/nodes/autogen-multi-agent.ts` | **Updated** — passes `executionContext` to orchestrator |
 | `packages/nodes-agents/src/nodes/autogen-agent.ts` | **Updated** — passes `executionContext` to tool loop |
+
+
+---
+
+## Production-Safe Email Implementation — Railway SMTP Hardening
+
+Added to `packages/nodes-base/src/email.send.ts` to fix "Connection timeout" on Railway when sending email via Gmail App Password SMTP.
+
+### Root cause on Railway
+
+Railway containers have IPv6 enabled. Node.js 17+ returns IPv6 addresses first from DNS by default. Gmail SMTP (`smtp.gmail.com`) only reliably accepts IPv4. Without `dns.setDefaultResultOrder("ipv4first")`, `getaddrinfo` returns `2607:f8b0:...` (IPv6), the TCP connect stalls silently, and you see "Connection timeout" with no other clue.
+
+### Required environment variables
+
+```
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=you@gmail.com
+SMTP_PASS=<16-char Gmail App Password>
+SMTP_FROM=you@gmail.com
+```
+
+`SMTP_PASS` must be a Gmail App Password — not your account password. Generate one at `myaccount.google.com/apppasswords` (requires 2FA enabled).
+
+---
+
+### Implementation: `packages/nodes-base/src/email.send.ts`
+
+#### `dns.setDefaultResultOrder("ipv4first")`
+
+Set at module load, before any DNS call. Forces `getaddrinfo` to return IPv4 addresses first. This is the single most important fix for Railway.
+
+#### `withTimeout<T>(promise, ms, label)` — upgraded
+
+```typescript
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timeout after ${ms}ms`));
+    }, ms);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutId); // always clears — no dangling handles
+  }
+}
+```
+
+The `finally { clearTimeout }` is critical. Without it, Node.js keeps the process alive waiting for the timer even after the promise resolved, causing the worker to appear stuck after a successful send.
+
+#### Nodemailer transporter — three explicit timeouts
+
+```typescript
+nodemailer.createTransport({
+  host: smtp.host,
+  port: smtp.port,
+  secure: false,           // false = STARTTLS on port 587
+  auth: { user, pass },
+  connectionTimeout: 30_000,  // TCP socket connect
+  greetingTimeout:   30_000,  // wait for "220 smtp.gmail.com" banner
+  socketTimeout:     30_000,  // idle socket during DATA transfer
+});
+```
+
+Each timeout covers a different sub-phase. Without all three, a stall in any sub-phase blocks forever.
+
+#### SMTP credential resolution — env vars as fallback
+
+Node config fields take priority; Railway env vars are the fallback:
+
+```typescript
+const host = merged.host?.trim() || process.env.SMTP_HOST?.trim() || "";
+const port = merged.port || Number(process.env.SMTP_PORT) || 587;
+const user = merged.authUser?.trim() || process.env.SMTP_USER?.trim() || "";
+const pass = merged.authPass?.trim() || process.env.SMTP_PASS?.trim() || "";
+const from = merged.from?.trim() || process.env.SMTP_FROM?.trim() || process.env.SMTP_USER?.trim() || "";
+```
+
+---
+
+### Phase-level timing logs — 6 named phases
+
+Every phase has a before/after log pair. The last log you see before a hang tells you exactly which phase is stuck.
+
+| Phase | Console log | What it covers |
+|---|---|---|
+| 0 | `[EMAIL] ===== START =====` | Env snapshot — SMTP_HOST, SMTP_PORT, user/pass existence |
+| 1 | `[EMAIL] resolving DNS` | `dns.promises.lookup()` with 10s timeout |
+| 2 | `[EMAIL] creating transporter` | Nodemailer config (synchronous) |
+| 3 | `[EMAIL] before verify` | TCP connect + EHLO + STARTTLS + AUTH LOGIN |
+| 4 | *(mail options build)* | Body + attachment serialization |
+| 5 | `[EMAIL] before sendMail` | DATA transfer to SMTP server |
+| 6 | `[EMAIL] TOTAL COMPLETED IN` | Result serialization + return |
+
+#### Phase 1 — DNS pre-resolution
+
+```typescript
+const result = await withTimeout(
+  dns.promises.lookup(smtp.host),
+  10_000,
+  `dns.lookup(${smtp.host})`,
+);
+console.log("[EMAIL] DNS resolved in", Date.now() - dnsStart, "ms");
+console.log("[EMAIL] DNS address", result.address, "family", result.family);
+```
+
+Runs before Nodemailer touches the network. Logs the resolved IP and address family. If `family === 6` (IPv6), a warning fires — that is the hang cause.
+
+#### Phase 3 — SMTP verify
+
+```typescript
+await withTimeout(transporter.verify(), 30_000, "smtp verify");
+```
+
+Opens a real TCP connection, completes `EHLO` + `AUTH LOGIN`, then closes. Tests all four sub-phases: TCP connect, SMTP greeting, TLS negotiation, authentication. If this fails, the error message identifies which sub-phase:
+
+| Error message | Sub-phase | Cause |
+|---|---|---|
+| `smtp verify timeout after 30000ms` | TCP connect or greeting | Port 587 blocked or TLS mismatch |
+| `535 Authentication failed` | AUTH | Wrong App Password |
+| `ECONNREFUSED` | TCP connect | Wrong host/port |
+| `certificate` / `TLS` | TLS handshake | `secure` flag mismatch |
+| `greeting timeout` | SMTP banner | Connected but no `220` response |
+
+#### Phase 5 — sendMail with `withTimeout`
+
+```typescript
+info = await withTimeout(
+  transporter.sendMail(mailOptions),
+  30_000,
+  "sendMail",
+);
+```
+
+Hard wall-clock cap on the entire DATA transfer. Nodemailer's `socketTimeout` should fire first, but `withTimeout` is the safety net for cases where Nodemailer's internal timer doesn't reject cleanly.
+
+---
+
+### Tool-level wrapper logs
+
+```
+[TOOL] send_client_email START
+...
+[TOOL] send_client_email END 4318 ms
+```
+
+Brackets the entire node execution including config parsing, so you can see total tool time vs SMTP time in Railway logs.
+
+---
+
+### Structured return values
+
+**Success:**
+```typescript
+return {
+  success: true,
+  messageId: info.messageId,
+  accepted: info.accepted,
+  rejected: info.rejected,
+  response: info.response,
+  durationMs: totalDurationMs,
+};
+```
+
+**Error (caught — never hangs):**
+```typescript
+return {
+  success: false,
+  error: error instanceof Error ? error.message : String(error),
+  accepted: [],
+  rejected: [],
+  durationMs: Date.now() - started,
+};
+```
+
+Errors return structured JSON instead of throwing, so the workflow engine receives the node output and the agent can read `success: false` to decide what to do next, rather than the entire workflow crashing.
+
+---
+
+### Structured error log on failure
+
+```typescript
+console.error("[EMAIL] ERROR");
+console.error({
+  message: error instanceof Error ? error.message : String(error),
+  stack:   error instanceof Error ? error.stack : undefined,
+  timestamp: new Date().toISOString(),
+  durationMs: Date.now() - started,
+});
+```
+
+Full stack trace always logged. The `durationMs` tells you how long the node ran before failing — if it's ~30000ms, a timeout fired; if it's <1000ms, it was a config/auth error.
+
+---
+
+### Reading Railway logs to find the exact hang
+
+**Successful send — full log sequence:**
+```
+[TOOL] send_client_email START
+[EMAIL] ===== START =====
+[EMAIL] timestamp 2026-05-19T12:00:00.000Z
+[EMAIL] SMTP_HOST smtp.gmail.com
+[EMAIL] SMTP_PORT 587
+[EMAIL] SMTP_USER exists true
+[EMAIL] SMTP_PASS exists true
+[EMAIL] resolving DNS
+[EMAIL] DNS resolved in 45 ms
+[EMAIL] DNS address 142.250.x.x family 4
+[EMAIL] creating transporter
+[EMAIL] transporter created
+[EMAIL] before verify
+[EMAIL] verify completed in 1823 ms
+[EMAIL] before sendMail
+[EMAIL] sendMail completed in 2341 ms
+[EMAIL] messageId <abc@smtp.gmail.com>
+[EMAIL] TOTAL COMPLETED IN 4312 ms
+[EMAIL] ===== END =====
+[TOOL] send_client_email END 4318 ms
+```
+
+**IPv6 hang — what you see:**
+```
+[EMAIL] resolving DNS
+[EMAIL] DNS resolved in 52 ms
+[EMAIL] DNS address 2607:f8b0:... family 6   ← IPv6 returned
+[EMAIL] WARNING: IPv6 address returned...
+[EMAIL] creating transporter
+[EMAIL] transporter created
+[EMAIL] before verify
+                                              ← hangs 30s here
+[EMAIL] verify FAILED
+{ message: "smtp verify timeout after 30000ms", phase: "SMTP_VERIFY" }
+```
+
+Fix: confirm `dns.setDefaultResultOrder("ipv4first")` runs before any import that triggers DNS. Move it to the top of the file, before all other imports if needed.
+
+**Wrong App Password — what you see:**
+```
+[EMAIL] before verify
+[EMAIL] verify FAILED
+{ message: "535-5.7.8 Username and Password not accepted", phase: "SMTP_VERIFY" }
+```
+
+Fix: regenerate the App Password at `myaccount.google.com/apppasswords`. Remove spaces from the 16-character code.
+
+**Port blocked — what you see:**
+```
+[EMAIL] DNS resolved in 48 ms
+[EMAIL] DNS address 142.250.x.x family 4     ← IPv4, DNS is fine
+[EMAIL] before verify
+                                              ← hangs 30s
+[EMAIL] verify FAILED
+{ message: "smtp verify timeout after 30000ms", phase: "SMTP_VERIFY" }
+```
+
+DNS resolved correctly but verify still timed out — port 587 is blocked by Railway egress firewall. Check Railway project network settings for outbound port 587.
+
+---
+
+### `diagnoseSMTPError()` — automatic diagnosis
+
+Every error catch calls `diagnoseSMTPError(message, phase)` which maps error strings to actionable fixes:
+
+| Error pattern | Diagnosis |
+|---|---|
+| `timeout` + verify phase | IPv6 / port 587 blocked / wrong host |
+| `timeout` + sendMail phase | Large payload / socketTimeout / network congestion |
+| `ECONNREFUSED` | Wrong host:port combination |
+| `ENOTFOUND` / `getaddrinfo` | DNS cannot resolve SMTP_HOST |
+| `ETIMEDOUT` | Host reachable but port not responding |
+| `535` / `authentication` | Wrong App Password |
+| `534` / `less secure` | Account password used instead of App Password |
+| `550` / `relay` | Recipient rejected by server |
+| `certificate` / `TLS` | `secure` flag mismatch (587→false, 465→true) |
+| `greeting` | Connected but no `220` banner — wrong port or TLS mismatch |
+
+---
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `packages/nodes-base/src/email.send.ts` | Full rewrite of `execute()` with 6-phase instrumentation, upgraded `withTimeout`, DNS pre-resolution, structured success/error returns, tool-level wrapper logs, `diagnoseSMTPError()` helper |
+
+---
+
+## Deep Phase Diagnostics Extension
+
+Extended the email implementation with explicit per-await timing and the exact log lines required for Railway production debugging.
+
+### Additional exact log lines added
+
+```typescript
+// Phase 0 — env snapshot
+console.log("[EMAIL] ===== START =====");
+console.log("[EMAIL] timestamp", new Date().toISOString());
+console.log("[EMAIL] SMTP_HOST", process.env.SMTP_HOST);
+console.log("[EMAIL] SMTP_PORT", process.env.SMTP_PORT);
+console.log("[EMAIL] SMTP_USER exists", !!process.env.SMTP_USER);
+console.log("[EMAIL] SMTP_PASS exists", !!process.env.SMTP_PASS);
+
+// Phase 1 — DNS
+console.log("[EMAIL] resolving DNS");
+console.log("[EMAIL] DNS resolved in", Date.now() - dnsStart, "ms");
+
+// Phase 2 — transporter
+console.log("[EMAIL] creating transporter");
+console.log("[EMAIL] transporter created");
+
+// Phase 3 — verify
+console.log("[EMAIL] before verify");
+console.log("[EMAIL] verify completed in", Date.now() - verifyStart, "ms");
+
+// Phase 5 — sendMail
+console.log("[EMAIL] before sendMail");
+console.log("[EMAIL] sendMail completed in", Date.now() - sendStart, "ms");
+console.log("[EMAIL] messageId", info.messageId);
+console.log("[EMAIL] TOTAL COMPLETED IN", Date.now() - started, "ms");
+console.log("[EMAIL] ===== END =====");
+
+// Tool wrapper
+console.log("[TOOL] send_client_email START");
+console.log("[TOOL] send_client_email END", Date.now() - toolStart, "ms");
+```
+
+### Payload size check (Phase 4)
+
+```typescript
+const serializedSize = JSON.stringify(mailOptions).length;
+// Warns if > 500,000 chars — may hit socketTimeout during DATA phase
+```
+
+### Where each timeout fires
+
+| Timeout | Fires when | Nodemailer internal or withTimeout |
+|---|---|---|
+| `connectionTimeout: 30000` | TCP socket connect stalls | Nodemailer internal |
+| `greetingTimeout: 30000` | No `220` banner after connect | Nodemailer internal |
+| `socketTimeout: 30000` | Idle socket during DATA | Nodemailer internal |
+| `withTimeout(verify, 30000)` | verify() doesn't reject cleanly | Hard wall-clock cap |
+| `withTimeout(sendMail, 30000)` | sendMail() doesn't reject cleanly | Hard wall-clock cap |
+| `withTimeout(dns.lookup, 10000)` | DNS resolution stalls | Hard wall-clock cap |
+
+Nodemailer's internal timeouts fire first in normal cases. `withTimeout` is the safety net for cases where Nodemailer's internal timer doesn't reject cleanly (observed on some Railway proxy configurations).
