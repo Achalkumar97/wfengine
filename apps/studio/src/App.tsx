@@ -19,6 +19,7 @@ import {
   Play,
   Redo2,
   Save,
+  Square,
   X,
   Undo2,
   Upload,
@@ -88,15 +89,18 @@ function newTabId(): string {
 async function readNdjsonLines(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   onObject: (v: unknown) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const dec = new TextDecoder();
   let buf = "";
   for (;;) {
+    if (signal?.aborted) return;
     const { done, value } = await reader.read();
     if (value) buf += dec.decode(value, { stream: true });
     const parts = buf.split("\n");
     buf = parts.pop() ?? "";
     for (const line of parts) {
+      if (signal?.aborted) return;
       const t = line.trim();
       if (!t) continue;
       try {
@@ -107,6 +111,7 @@ async function readNdjsonLines(
     }
     if (done) break;
   }
+  if (signal?.aborted) return;
   const tail = buf.trim();
   if (tail) {
     try {
@@ -126,6 +131,8 @@ export default function App(): ReactElement {
   const [runBusy, setRunBusy] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  /** AbortController for the current inline streaming run (runWorkflow). */
+  const runAbortRef = useRef<AbortController | null>(null);
   const [runResult, setRunResult] = useState<WorkflowExecuteResult | null>(
     null,
   );
@@ -246,6 +253,16 @@ export default function App(): ReactElement {
       setRunBusy(false);
     }
   }, [activeTab, agentLibraryDoc, asyncRun]);
+
+  /** Stop the currently running inline (Live) workflow by aborting the fetch. */
+  const stopInlineRun = useCallback(() => {
+    runAbortRef.current?.abort();
+    runAbortRef.current = null;
+    setRunBusy(false);
+    setRunLiveSteps(null);
+    setRunError("Run cancelled by user.");
+    toast.info("Run stopped.");
+  }, []);
 
   const agentLibraryUsageWorkflows = useMemo(
     () => (tabs ?? []).map((t) => ({ nodes: t.nodes })),
@@ -539,6 +556,8 @@ export default function App(): ReactElement {
     const headers = authHeaders();
 
     setRunBusy(true);
+    const abort = new AbortController();
+    runAbortRef.current = abort;
     setRunError(null);
     setRunResult(null);
     setLastRunDefinition(definition);
@@ -561,6 +580,7 @@ export default function App(): ReactElement {
       const res = await fetch(url, {
         method: "POST",
         headers,
+        signal: abort.signal,
         body: JSON.stringify({
           definition,
           initialData,
@@ -656,16 +676,18 @@ export default function App(): ReactElement {
           setRunError(String(o.message ?? "Execution failed"));
           toast.error("Workflow failed — see Run tab");
         }
-      });
+      }, abort.signal);
 
       canvasRef.current?.setInspectorTab("run");
     } catch (e) {
+      if ((e as Error)?.name === "AbortError") return; // user cancelled via stopInlineRun
       const msg = e instanceof Error ? e.message : String(e);
       setRunError(msg);
       setRunLiveSteps(null);
       toast.error("Run failed — see Run tab");
       canvasRef.current?.setInspectorTab("run");
     } finally {
+      runAbortRef.current = null;
       setRunBusy(false);
     }
   }, [activeTab, agentLibraryDoc]);
@@ -919,7 +941,7 @@ export default function App(): ReactElement {
 
       <header className="relative z-10 flex h-[52px] shrink-0 items-stretch border-b border-white/[0.06] bg-[#12121a]/95 backdrop-blur-md">
         {/* Left: brand */}
-        <div className="flex min-w-0 flex-[1] items-center gap-2 pl-4 pr-2">
+        <div className="flex w-[148px] shrink-0 items-center gap-2 pl-4 pr-2">
           <div className="flex items-baseline gap-2">
             <span className="bg-gradient-to-r from-white to-zinc-400 bg-clip-text text-lg font-bold tracking-tight text-transparent">
               wfengine
@@ -930,9 +952,9 @@ export default function App(): ReactElement {
           </div>
         </div>
 
-        {/* Center: tabs */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 flex h-full items-center justify-center">
-          <div className="pointer-events-auto flex max-w-[min(820px,62vw)] items-center gap-2 overflow-x-auto px-3">
+        {/* Center: tabs — flex-1 with overflow scroll, no absolute positioning */}
+        <div className="flex min-w-0 flex-1 items-center overflow-x-auto">
+          <div className="flex items-center gap-2 px-3">
             {tabs.map((t) => {
               const isActive = t.tabId === activeTab.tabId;
               return (
@@ -941,13 +963,18 @@ export default function App(): ReactElement {
                   type="button"
                   onClick={() => {
                     if (t.tabId === activeTab.tabId) return;
+                    // Flush immediately, then wait 350ms for debounced form
+                    // writes (200–400ms) to settle before switching the tab.
                     flushCanvasIntoActiveTab();
-                    setActiveTabId(t.tabId);
                     setRunResult(null);
                     setRunError(null);
-                    queueMicrotask(() => {
-                      canvasRef.current?.replaceFlowState(t.nodes, t.edges);
-                    });
+                    window.setTimeout(() => {
+                      flushCanvasIntoActiveTab();
+                      setActiveTabId(t.tabId);
+                      queueMicrotask(() => {
+                        canvasRef.current?.replaceFlowState(t.nodes, t.edges);
+                      });
+                    }, 350);
                   }}
                   className={cn(
                     "group inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm",
@@ -1038,7 +1065,7 @@ export default function App(): ReactElement {
         </div>
 
         {/* Right: actions */}
-        <div className="flex min-w-0 flex-[1] items-center justify-end gap-1.5 pr-3 pl-2">
+        <div className="flex shrink-0 items-center gap-1.5 pl-2 pr-3">
           <ToolbarBtn
             title="Undo"
             disabled={!hist.canUndo}
@@ -1144,29 +1171,52 @@ export default function App(): ReactElement {
 
           <span className="mx-0.5 hidden h-6 w-px bg-white/10 md:inline-block" />
 
-          <button
-            type="button"
-            disabled={runBusy}
-            onClick={() => void runWorkflow()}
-            title="Run inline (streaming, no timeout protection)"
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-gradient-to-r from-[#9d4fab] to-[#3b82f6] px-4 py-2 text-sm font-semibold text-white shadow-[0_2px_14px_rgba(59,130,246,0.18)] transition hover:brightness-[1.06] disabled:opacity-60"
-          >
-            <Play className="h-4 w-4 fill-current" />
-            {runBusy ? "Running…" : "Run"}
-          </button>
+          {/* Run (Live) / Stop inline */}
+          {runBusy ? (
+            <button
+              type="button"
+              onClick={stopInlineRun}
+              title="Stop the running workflow"
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-[0_2px_14px_rgba(225,29,72,0.35)] transition hover:bg-rose-500"
+            >
+              <Square className="h-4 w-4 fill-current" />
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void runWorkflow()}
+              title="Run (Live) — streams results directly. Best for short, fast workflows. For long AI/agent workflows use Run (Async)."
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-gradient-to-r from-[#9d4fab] to-[#3b82f6] px-4 py-2 text-sm font-semibold text-white shadow-[0_2px_14px_rgba(59,130,246,0.18)] transition hover:brightness-[1.06]"
+            >
+              <Play className="h-4 w-4 fill-current" />
+              Run
+            </button>
+          )}
 
-          <button
-            type="button"
-            disabled={runBusy || asyncRun.state.phase === "queued" || asyncRun.state.phase === "running"}
-            onClick={() => void runWorkflowAsync()}
-            title="Run async (queue-based, timeout-safe for long AI workflows)"
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-violet-400/40 bg-[#1a1a22] px-4 py-2 text-sm font-semibold text-violet-200 transition hover:border-violet-400/60 hover:bg-[#22222c] disabled:opacity-60"
-          >
-            <Play className="h-4 w-4" />
-            {asyncRun.state.phase === "queued" || asyncRun.state.phase === "running"
-              ? "Running…"
-              : "Run (Async)"}
-          </button>
+          {/* Run (Async) / Stop async */}
+          {asyncRun.state.phase === "queued" || asyncRun.state.phase === "running" ? (
+            <button
+              type="button"
+              onClick={() => void asyncRun.cancel()}
+              title="Cancel the async workflow run"
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-rose-500/50 bg-rose-950/40 px-4 py-2 text-sm font-semibold text-rose-200 transition hover:border-rose-400/60 hover:bg-rose-950/60"
+            >
+              <Square className="h-4 w-4 fill-current" />
+              Stop Async
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={runBusy}
+              onClick={() => void runWorkflowAsync()}
+              title="Run (Async) — queues workflow in background. No timeout. Supports cancel. Best for long AI/agent workflows."
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-violet-400/40 bg-[#1a1a22] px-4 py-2 text-sm font-semibold text-violet-200 transition hover:border-violet-400/60 hover:bg-[#22222c] disabled:opacity-60"
+            >
+              <Play className="h-4 w-4" />
+              Run (Async)
+            </button>
+          )}
         </div>
 
         <input
