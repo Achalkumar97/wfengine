@@ -143,9 +143,14 @@ export default function App(): ReactElement {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importPasteRaw, setImportPasteRaw] = useState("");
   const [importPasteError, setImportPasteError] = useState<string | null>(null);
-  const [agentLibraryDoc, setAgentLibraryDoc] = useState<AgentLibraryDocument>(
-    () => loadAgentLibrary(),
-  );
+  const [agentLibraryDoc, setAgentLibraryDoc] = useState<AgentLibraryDocument>(() => {
+    const doc = loadAgentLibrary();
+    // Guard against corrupted localStorage: ensure agents is always an array
+    if (!doc || !Array.isArray(doc.agents)) {
+      return { schemaVersion: 1, agents: [] };
+    }
+    return doc;
+  });
   const [agentLibraryDialogOpen, setAgentLibraryDialogOpen] = useState(false);
   const [addAgentDialogOpen, setAddAgentDialogOpen] = useState(false);
   const [addAgentForNodeId, setAddAgentForNodeId] = useState<string | null>(
@@ -461,25 +466,28 @@ export default function App(): ReactElement {
       el.importWorkflowDefinition(def);
       const nodes = el.getNodes();
       const edges = el.getEdges();
-      setTabs((prev) =>
-        (prev ?? []).map((t) =>
-          t.tabId === tid
-            ? {
-                ...t,
-                nodes,
-                edges,
-                dirty: true,
-              }
-            : t,
-        ),
-      );
-      saveStudioSnapshot({
-        workflowId: def.id,
-        workflowDescription: "",
-        initialDataRaw: "{}",
-        nodes,
-        edges,
-      });
+      // Guard: ensure nodes/edges are arrays before saving
+      if (Array.isArray(nodes) && Array.isArray(edges)) {
+        setTabs((prev) =>
+          (prev ?? []).map((t) =>
+            t.tabId === tid
+              ? {
+                  ...t,
+                  nodes,
+                  edges,
+                  dirty: true,
+                }
+              : t,
+          ),
+        );
+        saveStudioSnapshot({
+          workflowId: def.id,
+          workflowDescription: "",
+          initialDataRaw: "{}",
+          nodes,
+          edges,
+        });
+      }
     });
 
     toast.success("Imported into a new tab — saved to this browser");
@@ -512,9 +520,12 @@ export default function App(): ReactElement {
       ]);
       setActiveTabId(tid);
       setLibraryOpen(false);
-      queueMicrotask(() => {
-        canvasRef.current?.replaceFlowState(ws.nodes, ws.edges);
-      });
+      // Guard: only call replaceFlowState if workspace data is valid
+      if (Array.isArray(ws.nodes) && Array.isArray(ws.edges)) {
+        queueMicrotask(() => {
+          canvasRef.current?.replaceFlowState(ws.nodes, ws.edges);
+        });
+      }
       toast.success("Opened saved workflow in a new tab");
     },
     [flushCanvasIntoActiveTab],
@@ -598,7 +609,7 @@ export default function App(): ReactElement {
         body: JSON.stringify({
           definition,
           initialData,
-          ...(agentLibraryDoc.agents.length > 0
+          ...(agentLibraryDoc.agents && agentLibraryDoc.agents.length > 0
             ? { agentLibrary: agentLibraryDoc }
             : {}),
         }),
@@ -773,7 +784,7 @@ export default function App(): ReactElement {
             definition,
             initialData,
             singleNodeRun: { nodeId, seedOutputs },
-            ...(agentLibraryDoc.agents.length > 0
+            ...(agentLibraryDoc.agents && agentLibraryDoc.agents.length > 0
               ? { agentLibrary: agentLibraryDoc }
               : {}),
           }),
@@ -939,6 +950,15 @@ export default function App(): ReactElement {
     );
   }
 
+  // Guard against corrupted tab data
+  if (!Array.isArray(activeTab.nodes) || !Array.isArray(activeTab.edges)) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-2 bg-[#0c0c10] text-zinc-400">
+        <span className="text-sm">Invalid tab data. Please refresh.</span>
+      </div>
+    );
+  }
+
   const setActiveTabField = <K extends keyof Omit<StudioTab, "tabId" | "nodes" | "edges" | "dirty" | "runFailedNodeIds" | "lastRunOutputs">>(
     key: K,
     value: StudioTab[K],
@@ -986,9 +1006,12 @@ export default function App(): ReactElement {
                     window.setTimeout(() => {
                       flushCanvasIntoActiveTab();
                       setActiveTabId(t.tabId);
-                      queueMicrotask(() => {
-                        canvasRef.current?.replaceFlowState(t.nodes, t.edges);
-                      });
+                      // Guard: only call replaceFlowState if tab data is valid
+                      if (Array.isArray(t.nodes) && Array.isArray(t.edges)) {
+                        queueMicrotask(() => {
+                          canvasRef.current?.replaceFlowState(t.nodes, t.edges);
+                        });
+                      }
                     }, 350);
                   }}
                   className={cn(
@@ -1025,12 +1048,15 @@ export default function App(): ReactElement {
                           const nextActive = remaining[0];
                           if (nextActive) {
                             setActiveTabId(nextActive.tabId);
-                            queueMicrotask(() => {
-                              canvasRef.current?.replaceFlowState(
-                                nextActive.nodes,
-                                nextActive.edges,
-                              );
-                            });
+                            // Guard: only call replaceFlowState if tab data is valid
+                            if (Array.isArray(nextActive.nodes) && Array.isArray(nextActive.edges)) {
+                              queueMicrotask(() => {
+                                canvasRef.current?.replaceFlowState(
+                                  nextActive.nodes,
+                                  nextActive.edges,
+                                );
+                              });
+                            }
                           }
                         }
                       }}
@@ -1437,7 +1463,7 @@ export default function App(): ReactElement {
         updateNodeConfig={(nodeId, config) => {
           canvasRef.current?.updateNodeConfig(nodeId, config);
         }}
-        libraryEntries={agentLibraryDoc.agents.map((a) => ({
+        libraryEntries={(agentLibraryDoc.agents ?? []).map((a) => ({
           id: a.id,
           name: a.name,
           systemPrompt: a.systemPrompt,
