@@ -350,23 +350,30 @@ function useDebouncedValidConfig<T extends FieldValues>(
     const baseStripped = strip
       ? stripOpenAiEnvFromConfig({ ...base })
       : { ...base };
-    const full = schema.safeParse(vals);
-    if (full.success) {
-      let data = full.data as Record<string, unknown>;
-      if (strip) data = stripOpenAiEnvFromConfig(data);
-      update(nid, data);
-      return;
+    const merged: Record<string, unknown> = { ...baseStripped };
+    
+    // We want to persist EXACTLY what the user typed into the graph node,
+    // even if it's currently invalid (like an empty string for a required field).
+    // If we only save on success, their WIP form drops on unmount.
+    
+    // 1. Blindly apply all current form values
+    for (const [key, val] of Object.entries(vals)) {
+      if (val !== undefined) merged[key] = val;
     }
+
+    // 2. Coerce types where possible so that numbers/booleans are stored correctly
     if (schema instanceof z.ZodObject) {
-      const partialResult = schema.partial().safeParse(vals);
-      if (partialResult.success) {
-        const merged: Record<string, unknown> = { ...baseStripped };
-        for (const [key, val] of Object.entries(partialResult.data)) {
-          if (val !== undefined) merged[key] = val;
+      for (const [key, fieldSchema] of Object.entries(schema.shape)) {
+        if (vals[key] !== undefined) {
+          const parsed = (fieldSchema as z.ZodTypeAny).safeParse(vals[key]);
+          if (parsed.success) {
+            merged[key] = parsed.data;
+          }
         }
-        update(nid, strip ? stripOpenAiEnvFromConfig(merged) : merged);
       }
     }
+
+    update(nid, strip ? stripOpenAiEnvFromConfig(merged) : merged);
   }, [schema]); // schema is a module-level constant — always stable
 
   // Debounced save triggered by every value change.
