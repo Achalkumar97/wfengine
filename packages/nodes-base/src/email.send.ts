@@ -358,13 +358,13 @@ export const emailSendNode: NodeDefinition = {
         },
         // connectionTimeout: TCP socket connect to smtp.gmail.com:587
         // If this fires → port 587 is blocked or host unreachable
-        connectionTimeout: 30_000,
+        connectionTimeout: 60_000,
         // greetingTimeout: wait for "220 smtp.gmail.com ESMTP" banner
         // If this fires → connected but server not responding (TLS mismatch, wrong port)
-        greetingTimeout: 30_000,
+        greetingTimeout: 60_000,
         // socketTimeout: idle socket during DATA transfer
         // If this fires → message body too large or network congestion
-        socketTimeout: 30_000,
+        socketTimeout: 60_000,
       });
 
       console.log("[EMAIL] transporter created");
@@ -451,7 +451,7 @@ export const emailSendNode: NodeDefinition = {
       try {
         info = await withTimeout(
           transporter.sendMail(mailOptions),
-          30_000,
+          60_000,
           "sendMail",
         );
       } catch (sendErr) {

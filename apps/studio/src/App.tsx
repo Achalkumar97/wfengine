@@ -222,6 +222,7 @@ export default function App(): ReactElement {
       return { id, type: n?.type ?? "?" };
     });
 
+    saveActiveTabSilently();
     setRunBusy(true);
     setRunError(null);
     setRunResult(null);
@@ -306,6 +307,7 @@ export default function App(): ReactElement {
   const flushCanvasIntoActiveTab = useCallback(() => {
     const el = canvasRef.current;
     if (!el) return;
+    saveActiveTabSilently();
     setTabs((prev) => {
       if (!prev || !activeTabId) return prev;
       const nodes = el.getNodes();
@@ -314,7 +316,7 @@ export default function App(): ReactElement {
         t.tabId === activeTabId ? { ...t, nodes, edges, dirty: true } : t,
       );
     });
-  }, [activeTabId]);
+  }, [activeTabId, saveActiveTabSilently]);
 
   useEffect(() => {
     const metas = listWorkspaces();
@@ -484,16 +486,14 @@ export default function App(): ReactElement {
     toast.success("Workflow exported");
   }, [activeTab?.workflowId]);
 
-  const onSaveToBrowser = useCallback(() => {
+  const saveActiveTabSilently = useCallback(() => {
     const el = canvasRef.current;
-    if (!el) return;
-    if (!activeTabId) return;
+    if (!el || !activeTabId) return;
     const wf = tabs?.find((t) => t.tabId === activeTabId);
     if (!wf) return;
     const nodes = el.getNodes();
     const edges = el.getEdges();
 
-    // New multi-workflow persistence (workspaces)
     const wid = wf.localWorkspaceId ?? `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     saveWorkspace(wid, {
       title: wf.workflowId || "untitled",
@@ -504,7 +504,6 @@ export default function App(): ReactElement {
       edges,
     });
 
-    // Back-compat single snapshot (kept for now)
     saveStudioSnapshot({
       workflowId: wf.workflowId,
       workflowDescription: wf.workflowDescription,
@@ -515,12 +514,25 @@ export default function App(): ReactElement {
     setTabs((prev) =>
       (prev ?? []).map((t) =>
         t.tabId === activeTabId
-          ? { ...t, dirty: false, savedAt: new Date().toISOString() }
+          ? { ...t, localWorkspaceId: wid, dirty: false, savedAt: new Date().toISOString() }
           : t,
       ),
     );
-    toast.success("Saved to this browser — survives refresh");
   }, [activeTabId, tabs]);
+
+  const onSaveToBrowser = useCallback(() => {
+    saveActiveTabSilently();
+    toast.success("Saved to this browser — survives refresh");
+  }, [saveActiveTabSilently]);
+
+  // Auto-save on refresh/close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveActiveTabSilently();
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [saveActiveTabSilently]);
 
   const runWorkflow = useCallback(async () => {
     const el = canvasRef.current;
@@ -555,6 +567,7 @@ export default function App(): ReactElement {
     const url = `${base}/runs/inline/stream`;
     const headers = authHeaders();
 
+    saveActiveTabSilently();
     setRunBusy(true);
     const abort = new AbortController();
     runAbortRef.current = abort;
@@ -732,6 +745,7 @@ export default function App(): ReactElement {
       const url = `${base}/runs/inline/stream`;
       const headers = authHeaders();
 
+      saveActiveTabSilently();
       const nodeMeta = definition.nodes.find((n) => n.id === nodeId);
       setRunBusy(true);
       setRunError(null);
