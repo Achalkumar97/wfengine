@@ -12,17 +12,28 @@ function runtimeConfig(): RuntimeStudioConfig {
   );
 }
 
+function firstNonEmpty(...values: Array<string | undefined>): string {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
 function apiBase(): string {
-  const raw =
-    runtimeConfig().VITE_WFENGINE_API ?? import.meta.env.VITE_WFENGINE_API ?? "";
+  const raw = firstNonEmpty(
+    runtimeConfig().VITE_WFENGINE_API,
+    import.meta.env.VITE_WFENGINE_API,
+  );
   return raw.replace(/\/$/, "");
 }
 
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { "content-type": "application/json" };
-  const key =
-    runtimeConfig().VITE_WFENGINE_API_KEY ??
-    import.meta.env.VITE_WFENGINE_API_KEY;
+  const key = firstNonEmpty(
+    runtimeConfig().VITE_WFENGINE_API_KEY,
+    import.meta.env.VITE_WFENGINE_API_KEY,
+  );
   if (key) h["x-api-key"] = key;
   return h;
 }
@@ -55,7 +66,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { ...init, headers: { ...authHeaders(), ...(init?.headers ?? {}) } });
   const body = await readJsonOrText(res);
   if (!res.ok) {
-    throw new Error(errorMessageFromBody(res.status, body));
+    const method = init?.method ?? "GET";
+    throw new Error(`${method} ${url} failed: ${errorMessageFromBody(res.status, body)}`);
   }
   return body as T;
 }
