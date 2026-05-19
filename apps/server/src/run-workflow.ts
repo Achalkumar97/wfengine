@@ -53,6 +53,30 @@ export async function executeExecutionRecord(
 
   await repo.markExecutionRunning(executionId);
 
+  // ── Cancellation polling ─────────────────────────────────────────────────
+  // The DELETE /runs/:id route marks the DB status as "cancelled" but cannot
+  // directly reach inside the running engine.execute() call.
+  // We bridge this gap by polling the DB every 3 seconds and aborting the
+  // AbortController when we see the cancelled status.  The signal is passed
+  // into engine.execute() which propagates it to every node executor.
+  const cancelAbort = new AbortController();
+  const cancelPollInterval = setInterval(() => {
+    void (async () => {
+      try {
+        const s = await repo.getExecutionStatus(executionId);
+        if (s?.status === "cancelled" && !cancelAbort.signal.aborted) {
+          console.info(
+            `[run-workflow] Execution ${executionId} cancelled via DB — aborting engine`,
+          );
+          cancelAbort.abort();
+        }
+      } catch {
+        /* best-effort — don't crash the run on a transient DB error */
+      }
+    })();
+  }, 3_000);
+  // ─────────────────────────────────────────────────────────────────────────
+
   await bus?.publish({
     type: "execution_started",
     executionId,
@@ -69,6 +93,7 @@ export async function executeExecutionRecord(
   try {
     const result = await engine.execute(definition, initialData, {
       executionId,
+      signal: cancelAbort.signal,
       onNodeProgress: async (ev) => {
         if (ev.phase === "start") {
           nodeStartTimes.set(ev.nodeId, Date.now());
@@ -154,6 +179,15 @@ export async function executeExecutionRecord(
       await repo.appendExecutionEvent(executionId, event);
     }
   } catch (err) {
+    clearInterval(cancelPollInterval);
+    // If the engine threw because of our abort signal, the DB is already
+    // marked cancelled — don't overwrite it with a generic "failed" status.
+    if (cancelAbort.signal.aborted) {
+      console.info(
+        `[run-workflow] Execution ${executionId} aborted cleanly (cancelled by user)`,
+      );
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     await repo.markExecutionFailed(executionId, message);
 
@@ -171,7 +205,8 @@ export async function executeExecutionRecord(
     } catch {
       /* best-effort */
     }
-    throw err;
+  } finally {
+    clearInterval(cancelPollInterval);
   }
 }
 
