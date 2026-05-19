@@ -39,10 +39,14 @@ model Execution {
   initialData       Json?
   result            Json?
   errorSummary      String?
+  /// Stores { events: ExecutionEvent[], currentNodeId?, currentAgentName?, progressPercent?, inlineDefinition? }
   logs              Json?
   queued            Boolean          @default(false)
+  createdAt         DateTime         @default(now())
   startedAt         DateTime?
   finishedAt        DateTime?
 
   @@index([workflowVersionId])
+  @@index([status])
+  @@index([createdAt])
 }

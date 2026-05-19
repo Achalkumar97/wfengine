@@ -16,6 +16,7 @@ import { registerHookRoutes } from "./routes/hooks.js";
 import { registerCronRoutes } from "./routes/cron.js";
 import { registerOllamaRoutes } from "./routes/ollama.js";
 import { registerRunsInlineRoutes } from "./routes/runs-inline.js";
+import { registerRunsRoutes } from "./routes/runs.js";
 
 export async function buildApp(deps: {
   prisma: PrismaClient;
@@ -77,6 +78,7 @@ export async function buildApp(deps: {
   await registerCronRoutes(app, deps.prisma, deps.queue);
   await registerOllamaRoutes(app);
   await registerRunsInlineRoutes(app, deps.engine);
+  await registerRunsRoutes(app, { prisma: deps.prisma, queue: deps.queue });
 
   app.get("/health", async () => ({ ok: true }));
 

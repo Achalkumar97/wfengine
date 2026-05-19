@@ -144,6 +144,13 @@ export const autogenAgentNode: NodeDefinition = {
               openAiApiKey: c.openAiApiKey,
               ollamaBaseUrl: c.ollamaBaseUrl,
             },
+            logger: context.logger,
+            executionContext: {
+              executionId: context.executionId,
+              workflowId: context.workflowId,
+              nodeId: context.executionId, // nodeId is in child logger bindings
+              agentName: c.agentName ?? "agent",
+            },
           })
         : await openAiChatCompletion({
             provider,

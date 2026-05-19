@@ -188,6 +188,11 @@ export const autogenMultiAgentNode: NodeDefinition = {
       forceToolsFirstCompletionOnTurnIndices:
         c.forceToolsFirstCompletionOnTurnIndices,
       multiAgentToolBinding: resolvedToolBinding,
+      executionContext: {
+        executionId: context.executionId,
+        workflowId: context.workflowId,
+        nodeId,
+      },
     });
 
     const wfNodeTools = (c.tools ?? []).filter((t) => t.kind === "workflow_node");

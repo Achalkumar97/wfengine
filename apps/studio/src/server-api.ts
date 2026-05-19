@@ -180,3 +180,237 @@ export async function getServerWorkflowVersion(versionId: string): Promise<Workf
     { method: "GET" },
   );
 }
+
+// ─── Async Execution API ─────────────────────────────────────────────────────
+
+export type AsyncRunResponse = {
+  executionId: string;
+  status: "queued";
+  createdAt: string;
+};
+
+export type ExecutionStatusResponse = {
+  executionId: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  progressPercent?: number;
+  currentNodeId?: string;
+  currentAgentName?: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+  workflowId?: string;
+};
+
+export type ExecutionEventData = {
+  type: string;
+  executionId: string;
+  workflowId?: string;
+  timestamp: string;
+  // node events
+  nodeId?: string;
+  nodeType?: string;
+  ok?: boolean;
+  error?: string;
+  durationMs?: number;
+  // agent events
+  agentName?: string;
+  turn?: number;
+  // tool events
+  toolCallId?: string;
+  toolName?: string;
+  toolIndex?: number;
+  // openai events
+  model?: string;
+  provider?: string;
+  finishReason?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  // completion events
+  status?: string;
+  completedAt?: string;
+  failedAt?: string;
+  startedAt?: string;
+  // log events
+  level?: string;
+  message?: string;
+  meta?: Record<string, unknown>;
+};
+
+/**
+ * POST /runs — enqueue an async workflow execution.
+ * Returns immediately with executionId.
+ */
+export async function startAsyncRun(body: {
+  definition?: unknown;
+  workflowVersionId?: string;
+  initialData?: unknown;
+  agentLibrary?: unknown;
+  singleNodeRun?: { nodeId: string; seedOutputs: Record<string, unknown> };
+}): Promise<AsyncRunResponse> {
+  return await request<AsyncRunResponse>("/runs", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * GET /runs/:executionId/status — lightweight polling endpoint.
+ */
+export async function getExecutionStatus(
+  executionId: string,
+): Promise<ExecutionStatusResponse> {
+  return await request<ExecutionStatusResponse>(
+    `/runs/${encodeURIComponent(executionId)}/status`,
+    { method: "GET" },
+  );
+}
+
+/**
+ * GET /runs/:executionId/events — fetch all stored events (for replay).
+ */
+export async function getExecutionEvents(
+  executionId: string,
+): Promise<{ executionId: string; events: ExecutionEventData[] }> {
+  return await request<{ executionId: string; events: ExecutionEventData[] }>(
+    `/runs/${encodeURIComponent(executionId)}/events`,
+    { method: "GET" },
+  );
+}
+
+/**
+ * DELETE /runs/:executionId — cancel a queued or running execution.
+ */
+export async function cancelExecution(
+  executionId: string,
+): Promise<{ executionId: string; status: string }> {
+  return await request<{ executionId: string; status: string }>(
+    `/runs/${encodeURIComponent(executionId)}`,
+    { method: "DELETE" },
+  );
+}
+
+/**
+ * Subscribe to live execution events via SSE.
+ * Returns a cleanup function — call it to close the connection.
+ *
+ * Falls back to polling if SSE is unavailable.
+ */
+export function subscribeToExecutionStream(
+  executionId: string,
+  onEvent: (event: ExecutionEventData) => void,
+  onEnd: (status: "completed" | "failed" | "cancelled") => void,
+  onError?: (err: Error) => void,
+): () => void {
+  const url = `${apiBase()}/runs/${encodeURIComponent(executionId)}/stream`;
+  const headers = authHeaders();
+  const apiKey = headers["x-api-key"];
+
+  // EventSource doesn't support custom headers — use fetch + ReadableStream instead
+  const ac = new AbortController();
+  let closed = false;
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    ac.abort();
+  };
+
+  void (async () => {
+    try {
+      const res = await fetch(url, {
+        headers: apiKey ? { "x-api-key": apiKey } : {},
+        signal: ac.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        onError?.(new Error(`SSE connection failed: ${res.status}`));
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (value) buf += dec.decode(value, { stream: true });
+
+        // SSE format: lines starting with "data: "
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith(":")) continue; // keepalive comment
+          if (trimmed.startsWith("data: ")) {
+            const json = trimmed.slice(6).trim();
+            try {
+              const event = JSON.parse(json) as ExecutionEventData;
+              onEvent(event);
+
+              if (event.type === "stream_end") {
+                const s = event.status as "completed" | "failed" | "cancelled" | undefined;
+                onEnd(s ?? "completed");
+                cleanup();
+                return;
+              }
+            } catch {
+              /* malformed event — skip */
+            }
+          }
+        }
+
+        if (done) break;
+      }
+    } catch (err) {
+      if (closed) return; // aborted intentionally
+      onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
+  })();
+
+  return cleanup;
+}
+
+/**
+ * Poll execution status until terminal state.
+ * Used as fallback when SSE is unavailable.
+ */
+export function pollExecutionStatus(
+  executionId: string,
+  onStatus: (status: ExecutionStatusResponse) => void,
+  onEnd: (status: "completed" | "failed" | "cancelled") => void,
+  intervalMs = 1500,
+): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const poll = async () => {
+    if (stopped) return;
+    try {
+      const status = await getExecutionStatus(executionId);
+      onStatus(status);
+      if (
+        status.status === "completed" ||
+        status.status === "failed" ||
+        status.status === "cancelled"
+      ) {
+        onEnd(status.status);
+        return;
+      }
+    } catch {
+      /* network error — keep polling */
+    }
+    if (!stopped) {
+      timer = setTimeout(() => void poll(), intervalMs);
+    }
+  };
+
+  void poll();
+
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
+}
+

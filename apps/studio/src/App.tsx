@@ -52,6 +52,8 @@ import {
   listServerWorkflows,
   type WorkflowRow,
 } from "./server-api.js";
+import { useAsyncRun } from "./useAsyncRun.js";
+import { ExecutionProgressPanel } from "./ExecutionProgressPanel.js";
 import {
   listWorkspaces,
   loadWorkspace,
@@ -153,6 +155,97 @@ export default function App(): ReactElement {
   const [serverError, setServerError] = useState<string | null>(null);
 
   const activeTab = tabs?.find((t) => t.tabId === activeTabId);
+
+  // ── Async run (POST /runs + SSE) ──────────────────────────────────────────
+  const asyncRun = useAsyncRun({
+    onNodeStarted: (nodeId, nodeType) => {
+      setRunLiveSteps((prev) =>
+        prev
+          ? prev.map((s) => (s.nodeId === nodeId ? { ...s, status: "running" } : s))
+          : [{ nodeId, nodeType, status: "running" }],
+      );
+    },
+    onNodeCompleted: (nodeId, nodeType, ok, error) => {
+      setRunLiveSteps((prev) =>
+        prev
+          ? prev.map((s) =>
+              s.nodeId === nodeId ? { ...s, status: ok ? "ok" : "failed", error } : s,
+            )
+          : [{ nodeId, nodeType, status: ok ? "ok" : "failed", error }],
+      );
+    },
+    onFinished: (state) => {
+      if (state.phase === "completed") {
+        toast.success("Async run completed");
+        canvasRef.current?.setInspectorTab("run");
+      } else if (state.phase === "failed") {
+        toast.error("Async run failed — see Run tab");
+        canvasRef.current?.setInspectorTab("run");
+      }
+    },
+  });
+
+  const runWorkflowAsync = useCallback(async () => {
+    const el = canvasRef.current;
+    if (!el || !activeTab) return;
+    const definition = el.exportWorkflowDefinition();
+    if (!definition.nodes.length) {
+      toast.error("Add at least one node before running.");
+      return;
+    }
+    let initialData: unknown = undefined;
+    try {
+      const trimmed = activeTab.initialDataRaw.trim();
+      if (trimmed.length > 0) initialData = JSON.parse(trimmed) as unknown;
+    } catch {
+      toast.error("Initial data must be valid JSON.");
+      return;
+    }
+
+    let order: string[];
+    try {
+      order = topologicalSort(definition);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      return;
+    }
+
+    const orderedNodes = order.map((id) => {
+      const n = definition.nodes.find((x) => x.id === id);
+      return { id, type: n?.type ?? "?" };
+    });
+
+    setRunBusy(true);
+    setRunError(null);
+    setRunResult(null);
+    setLastRunDefinition(definition);
+    setRunLiveSteps(
+      orderedNodes.map((n) => ({ nodeId: n.id, nodeType: n.type, status: "pending" as const })),
+    );
+    setTabs((prev) =>
+      (prev ?? []).map((t) =>
+        t.tabId === activeTab.tabId ? { ...t, runFailedNodeIds: [] } : t,
+      ),
+    );
+
+    try {
+      await asyncRun.start({
+        definition,
+        initialData,
+        agentLibrary: agentLibraryDoc.agents.length > 0 ? agentLibraryDoc : undefined,
+        orderedNodes,
+      });
+      canvasRef.current?.setInspectorTab("run");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setRunError(msg);
+      setRunLiveSteps(null);
+      toast.error("Async run failed — see Run tab");
+      canvasRef.current?.setInspectorTab("run");
+    } finally {
+      setRunBusy(false);
+    }
+  }, [activeTab, agentLibraryDoc, asyncRun]);
 
   const agentLibraryUsageWorkflows = useMemo(
     () => (tabs ?? []).map((t) => ({ nodes: t.nodes })),
@@ -1055,10 +1148,24 @@ export default function App(): ReactElement {
             type="button"
             disabled={runBusy}
             onClick={() => void runWorkflow()}
+            title="Run inline (streaming, no timeout protection)"
             className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-gradient-to-r from-[#9d4fab] to-[#3b82f6] px-4 py-2 text-sm font-semibold text-white shadow-[0_2px_14px_rgba(59,130,246,0.18)] transition hover:brightness-[1.06] disabled:opacity-60"
           >
             <Play className="h-4 w-4 fill-current" />
             {runBusy ? "Running…" : "Run"}
+          </button>
+
+          <button
+            type="button"
+            disabled={runBusy || asyncRun.state.phase === "queued" || asyncRun.state.phase === "running"}
+            onClick={() => void runWorkflowAsync()}
+            title="Run async (queue-based, timeout-safe for long AI workflows)"
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-violet-400/40 bg-[#1a1a22] px-4 py-2 text-sm font-semibold text-violet-200 transition hover:border-violet-400/60 hover:bg-[#22222c] disabled:opacity-60"
+          >
+            <Play className="h-4 w-4" />
+            {asyncRun.state.phase === "queued" || asyncRun.state.phase === "running"
+              ? "Running…"
+              : "Run (Async)"}
           </button>
         </div>
 
@@ -1122,31 +1229,49 @@ export default function App(): ReactElement {
             </div>
           )}
           renderRunPanel={() => (
-            <RunInspectorPanel
-              runResult={runResult}
-              runError={runError}
-              workflowDefinition={lastRunDefinition}
-              liveSteps={runLiveSteps}
-              runBusy={runBusy}
-              onClear={() => {
-                setRunResult(null);
-                setRunError(null);
-                setLastRunDefinition(null);
-                setRunLiveSteps(null);
-                setTabs((prev) =>
-                  (prev ?? []).map((t) =>
-                    t.tabId === activeTab.tabId
-                      ? {
-                          ...t,
-                          runFailedNodeIds: [],
-                          lastRunOutputs: undefined,
-                        }
-                      : t,
-                  ),
-                );
-              }}
-              onOpenModal={() => setRunOpen(true)}
-            />
+            <div className="space-y-6">
+              {/* Async execution progress panel — shown when an async run is active or finished */}
+              {asyncRun.state.phase !== "idle" ? (
+                <div>
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                    Async Run
+                  </p>
+                  <ExecutionProgressPanel
+                    state={asyncRun.state}
+                    liveSteps={asyncRun.liveSteps}
+                    onCancel={() => void asyncRun.cancel()}
+                    onClear={() => asyncRun.reset()}
+                  />
+                </div>
+              ) : null}
+
+              {/* Inline streaming run panel */}
+              <RunInspectorPanel
+                runResult={runResult}
+                runError={runError}
+                workflowDefinition={lastRunDefinition}
+                liveSteps={runLiveSteps}
+                runBusy={runBusy}
+                onClear={() => {
+                  setRunResult(null);
+                  setRunError(null);
+                  setLastRunDefinition(null);
+                  setRunLiveSteps(null);
+                  setTabs((prev) =>
+                    (prev ?? []).map((t) =>
+                      t.tabId === activeTab.tabId
+                        ? {
+                            ...t,
+                            runFailedNodeIds: [],
+                            lastRunOutputs: undefined,
+                          }
+                        : t,
+                    ),
+                  );
+                }}
+                onOpenModal={() => setRunOpen(true)}
+              />
+            </div>
           )}
           className="min-h-0"
           runFailedNodeIds={activeTab.runFailedNodeIds}
