@@ -1,0 +1,53 @@
+{
+  "id": "simple-email-send",
+  "version": 1,
+  "_readme": [
+    "=== Simplest possible email send workflow ===",
+    "Flow: noop (start) → email.send",
+    "",
+    "No LLM, no HTTP fetch, no file I/O.",
+    "Just sends a plain-text email via Gmail App Password SMTP.",
+    "",
+    "Before importing:",
+    "  1. Replace authUser / from with your Gmail address",
+    "  2. Replace authPass with your 16-char Gmail App Password",
+    "     (generate at myaccount.google.com/apppasswords — requires 2FA)",
+    "  3. Replace 'to' with the recipient address",
+    "  4. Edit subject / text as needed",
+    "",
+    "OR set Railway environment variables and leave config fields empty:",
+    "  SMTP_HOST=smtp.gmail.com",
+    "  SMTP_PORT=587",
+    "  SMTP_USER=you@gmail.com",
+    "  SMTP_PASS=<app-password>",
+    "  SMTP_FROM=you@gmail.com",
+    "",
+    "Run via Studio: Import → paste this JSON → Run",
+    "Run via API:    POST /runs/inline  { definition: <this JSON> }"
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "send-email",
+      "type": "email.send",
+      "config": {
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "secure": false,
+        "authUser": "you@gmail.com",
+        "authPass": "PASTE_GMAIL_APP_PASSWORD",
+        "from": "you@gmail.com",
+        "to": "recipient@example.com",
+        "subject": "Hello from wfengine",
+        "text": "This is a test email sent from the wfengine workflow engine.\n\nIf you received this, SMTP is working correctly."
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "send-email" }
+  ]
+}

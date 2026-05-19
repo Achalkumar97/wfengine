@@ -5,8 +5,9 @@
  * Designed for Railway / cloud container environments where:
  *   - IPv6 may cause DNS resolution to hang (fixed with dns.setDefaultResultOrder)
  *   - SMTP connections can silently stall (fixed with explicit timeouts)
- *   - transporter.verify() must succeed before sendMail() is attempted
- *   - All failures must be logged with full context for debugging
+ *   - transporter.verify() is SKIPPED — it hangs on Railway outbound SMTP
+ *     and is not needed for production sending. sendMail() is attempted directly.
+ *   - All failures are caught and returned as structured JSON — workflow never crashes
  *
  * Required environment variables:
  *   SMTP_HOST=smtp.gmail.com
@@ -20,14 +21,17 @@
  *   connectionTimeout   — TCP socket connect to SMTP server (30s, Nodemailer internal)
  *   greetingTimeout     — wait for "220 smtp.gmail.com" ESMTP banner (30s, Nodemailer internal)
  *   socketTimeout       — idle socket during DATA transfer (30s, Nodemailer internal)
- *   withTimeout(verify) — hard wall-clock cap on transporter.verify() (30s)
  *   withTimeout(send)   — hard wall-clock cap on transporter.sendMail() (30s)
+ *
+ * NOTE: transporter.verify() is intentionally removed.
+ *   verify() opens a separate TCP connection just to test credentials, then closes it.
+ *   On Railway, this extra connection frequently times out even when sendMail() would
+ *   succeed. Removing verify() means the first real connection attempt is sendMail()
+ *   itself — if that fails, the error is caught and returned as structured JSON.
  *
  * Reading the logs to find the hang:
  *   Stops after "[EMAIL] resolving DNS"          → DNS phase hanging (IPv6 / ENOTFOUND)
  *   Stops after "[EMAIL] DNS resolved"           → TCP connect hanging (port blocked)
- *   Stops after "[EMAIL] before verify"          → SMTP greeting / TLS / AUTH hanging
- *   Stops after "[EMAIL] verify completed"       → DATA phase hanging in sendMail
  *   Stops after "[EMAIL] before sendMail"        → sendMail DATA / socketTimeout
  */
 
@@ -367,67 +371,15 @@ export const emailSendNode: NodeDefinition = {
       context.logger.info("[EMAIL] PHASE 2: transporter created");
 
       // ════════════════════════════════════════════════════════════════════
-      // PHASE 3: SMTP verify — TCP connect + EHLO + AUTH + QUIT
-      // This is the most diagnostic phase. It tests:
-      //   TCP connect     → connectionTimeout fires if blocked
-      //   SMTP greeting   → greetingTimeout fires if no "220" banner
-      //   TLS negotiation → STARTTLS handshake on port 587
-      //   Authentication  → AUTH LOGIN with user/pass
-      // If the log stops after "[EMAIL] before verify", the hang is in
-      // one of these four sub-phases. The error message will identify which.
+      // PHASE 3: SMTP verify — REMOVED
+      // transporter.verify() is intentionally skipped on Railway.
+      // It opens a separate TCP connection just to test credentials, then
+      // closes it. On Railway this extra connection frequently times out
+      // (30s hang) even when sendMail() would succeed on the same host.
+      // sendMail() is attempted directly — any connection/auth failure is
+      // caught below and returned as structured JSON without crashing the
+      // workflow engine.
       // ════════════════════════════════════════════════════════════════════
-      console.log("[EMAIL] before verify");
-      context.logger.info("[EMAIL] PHASE 3: before verify", {
-        host: smtp.host,
-        port: smtp.port,
-        secure: merged.secure,
-      });
-
-      const verifyStart = Date.now();
-      try {
-        // withTimeout is a hard wall-clock cap on top of Nodemailer's internal timeouts.
-        // Nodemailer's timeouts should fire first, but withTimeout is the safety net.
-        await withTimeout(transporter.verify(), 30_000, "smtp verify");
-      } catch (verifyErr) {
-        const verifyDurationMs = Date.now() - verifyStart;
-        const message = verifyErr instanceof Error ? verifyErr.message : String(verifyErr);
-        const stack = verifyErr instanceof Error ? verifyErr.stack : undefined;
-        const diagnosis = diagnoseSMTPError(message, "verify");
-
-        console.error("[EMAIL] verify FAILED");
-        console.error({
-          message,
-          stack,
-          timestamp: new Date().toISOString(),
-          durationMs: verifyDurationMs,
-          // PHASE 3 failure — tells you exactly which sub-phase failed:
-          //   "timeout after 30000ms" → connectionTimeout or greetingTimeout
-          //   "535"                   → AUTH failed (wrong password)
-          //   "ECONNREFUSED"          → port 587 blocked
-          //   "certificate"           → TLS handshake failed
-          phase: "SMTP_VERIFY",
-          diagnosis,
-        });
-        context.logger.error("[EMAIL] PHASE 3: verify FAILED", {
-          host: smtp.host,
-          port: smtp.port,
-          durationMs: verifyDurationMs,
-          error: message,
-          diagnosis,
-        });
-
-        throw new Error(
-          `[EMAIL] SMTP verify failed after ${verifyDurationMs}ms: ${message}\n` +
-          `Diagnosis: ${diagnosis}\n` +
-          `Config: host=${smtp.host} port=${smtp.port} user=${smtp.user}`,
-        );
-      }
-
-      const verifyDurationMs = Date.now() - verifyStart;
-      console.log("[EMAIL] verify completed in", verifyDurationMs, "ms");
-      context.logger.info("[EMAIL] PHASE 3: verify completed", {
-        durationMs: verifyDurationMs,
-      });
 
       // ════════════════════════════════════════════════════════════════════
       // PHASE 4: Build mail options
@@ -544,7 +496,6 @@ export const emailSendNode: NodeDefinition = {
         rejected: info.rejected,
         response: info.response,
         sendDurationMs,
-        verifyDurationMs,
         totalDurationMs,
       });
 
