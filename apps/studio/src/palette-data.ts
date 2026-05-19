@@ -133,7 +133,7 @@ export const STUDIO_PALETTE: PaletteNodeMeta[] = [
     label: "MAF: Agent group",
     category: "AI Agents",
     description:
-      "Microsoft Agent Framework–style multi-agent group over upstream JSON (OpenAI-compatible API).",
+      "Microsoft Agent Framework–style multi-agent group over upstream JSON with OpenAI or Ollama.",
     icon: "users-round",
   },
   {
@@ -141,7 +141,7 @@ export const STUDIO_PALETTE: PaletteNodeMeta[] = [
     label: "AutoGen: Single agent",
     category: "AI Agents",
     description:
-      "One AutoGen-style agent step — chat completion or optional Python AutoGen bridge.",
+      "One AutoGen-style agent step with OpenAI/Ollama chat or optional Python AutoGen bridge.",
     icon: "bot",
   },
   {
@@ -149,7 +149,7 @@ export const STUDIO_PALETTE: PaletteNodeMeta[] = [
     label: "AutoGen: Multi-agent",
     category: "AI Agents",
     description:
-      "Several agents with round-robin turns, or delegate to Python AutoGen.",
+      "Several agents with round-robin OpenAI/Ollama turns, or delegate to Python AutoGen.",
     icon: "network",
   },
 ];

@@ -1,0 +1,127 @@
+{
+  "id": "weather-10d-mfa-team-ollama",
+  "version": 1,
+  "_readme": [
+    "10-day weather workflow for Ollama/local OpenAI-compatible models.",
+    "This Ollama version is a pure linear DAG on purpose: fetch weather -> agent builds CSV -> file.write -> file.read -> agent drafts email body -> email.send.",
+    "It avoids OpenAI-style tool_calls because many Ollama models do not reliably emit tool calls, even when the actual model endpoint is working.",
+    "Backend runner env: WFENGINE_OLLAMA_BASE_URL=http://10.5.0.15:11434/v1 and WFENGINE_OLLAMA_MODEL=qwen2.5:14b.",
+    "Initial data example: { \"runDate\": \"2026-05-19\" }.",
+    "Replace authPass with a Gmail app password before sending email."
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "fetch-weather",
+      "type": "http.request",
+      "config": {
+        "url": "https://api.open-meteo.com/v1/forecast?latitude=19.076&longitude=72.8777&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto&past_days=10",
+        "method": "GET",
+        "timeoutMs": 30000
+      }
+    },
+    {
+      "id": "build-csv",
+      "type": "autogen.agent",
+      "config": {
+        "agentName": "csv_builder",
+        "llmProvider": "ollama",
+        "ollamaBaseUrl": "",
+        "model": "qwen2.5:14b",
+        "temperature": 0.1,
+        "timeoutMs": 180000,
+        "runtime": "openai_compatible",
+        "systemPrompt": "You convert Open-Meteo JSON into CSV only.\n\nThe user message contains merged workflow JSON. Find HTTP result `body` with `daily` arrays: `time`, `temperature_2m_max`, `temperature_2m_min`, `precipitation_sum`.\n\nOutput ONLY RFC4180 CSV text. No markdown fences. No commentary.\n\nHeader row exactly:\ndate,temp_max_c,temp_min_c,precip_mm\n\nThen one data row per aligned index. Dates exactly as given. Numbers only in numeric columns. If data is missing or request failed, output the header plus one ERROR row."
+      }
+    },
+    {
+      "id": "write-csv",
+      "type": "file.write",
+      "config": {
+        "wfengineToolOnly": false,
+        "path": "reports/weather-10d-latest.csv",
+        "content": "{{output}}",
+        "interpolateContentFromInput": true,
+        "encoding": "utf8",
+        "append": false,
+        "createDirs": true
+      }
+    },
+    {
+      "id": "read-csv",
+      "type": "file.read",
+      "config": {
+        "path": "reports/weather-10d-latest.csv",
+        "encoding": "utf8",
+        "maxBytes": 500000
+      }
+    },
+    {
+      "id": "draft-email",
+      "type": "autogen.agent",
+      "config": {
+        "agentName": "email_writer",
+        "llmProvider": "ollama",
+        "ollamaBaseUrl": "",
+        "model": "qwen2.5:14b",
+        "temperature": 0.2,
+        "timeoutMs": 180000,
+        "runtime": "openai_compatible",
+        "systemPrompt": "You write concise client-facing email body text only.\n\nThe user message includes merged JSON with `content` holding a CSV of 10-day weather. Summarize warmest/coldest/rainiest days and give a short gym/outdoor recommendation in 2-4 short paragraphs.\n\nDo not include a subject line. Do not paste the full CSV. Close with: Figures are from Open-Meteo and are not a substitute for official alerts."
+      }
+    },
+    {
+      "id": "send-report",
+      "type": "email.send",
+      "config": {
+        "wfengineToolOnly": false,
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "secure": false,
+        "authUser": "1997achalkumar@gmail.com",
+        "authPass": "PASTE_GMAIL_APP_PASSWORD",
+        "from": "1997achalkumar@gmail.com",
+        "to": "achal@signitysolutions.com",
+        "subject": "10-day weather summary (CSV attached)",
+        "text": ".",
+        "html": "",
+        "replyTo": "",
+        "attachInputContentAsFilename": "weather-last-10-days.csv"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "fetch-weather"
+    },
+    {
+      "source": "fetch-weather",
+      "target": "build-csv"
+    },
+    {
+      "source": "build-csv",
+      "target": "write-csv"
+    },
+    {
+      "source": "write-csv",
+      "target": "read-csv"
+    },
+    {
+      "source": "read-csv",
+      "target": "draft-email"
+    },
+    {
+      "source": "draft-email",
+      "target": "send-report"
+    },
+    {
+      "source": "read-csv",
+      "target": "send-report"
+    }
+  ]
+}

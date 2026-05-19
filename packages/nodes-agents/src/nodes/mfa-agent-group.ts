@@ -13,7 +13,7 @@ export const mfaAgentGroupNode: NodeDefinition = {
   label: "MAF: Agent group",
   category: "action",
   description:
-    "Runs multiple collaborating agents over merged upstream JSON using OpenAI-compatible chat (Microsoft Agent Framework–style orchestration). Set OPENAI_API_KEY on the runner or openAiApiKey in config.",
+    "Runs multiple collaborating agents over merged upstream JSON using OpenAI or Ollama through an OpenAI-compatible chat endpoint.",
   configSchema:
     MfaAgentGroupConfigSchema as unknown as import("zod").ZodType<
       Record<string, unknown>
@@ -58,7 +58,14 @@ export const mfaAgentGroupNode: NodeDefinition = {
 
     const { transcript, finalAnswer, structured } =
       await runMfaAgentGroupOrchestration({
-        config: { ...c, agents },
+        config: {
+          ...c,
+          agents,
+          llmProviderWasExplicit: Object.prototype.hasOwnProperty.call(
+            config,
+            "llmProvider",
+          ),
+        },
         upstream,
         logger: context.logger,
       });

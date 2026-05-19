@@ -5,9 +5,8 @@ import {
   AutogenAgentOutputSchema,
 } from "../schemas.js";
 import {
-  effectiveLlmModel,
   openAiChatCompletion,
-  resolveOpenAiFromEnv,
+  resolveLlmConfig,
 } from "../runtime/openai-chat.js";
 import { runOpenAiToolLoop } from "../runtime/openai-tool-loop.js";
 import { upstreamToJsonText } from "../runtime/upstream-payload.js";
@@ -93,22 +92,27 @@ export const autogenAgentNode: NodeDefinition = {
       return out;
     }
 
-    const resolved = resolveOpenAiFromEnv(c);
-    const { baseUrl, apiKey, usedOllamaEnvFallback } = resolved;
-    const model = effectiveLlmModel(c.model, usedOllamaEnvFallback);
+    const llm = resolveLlmConfig({
+      ...c,
+      llmProviderWasExplicit: Object.prototype.hasOwnProperty.call(
+        config,
+        "llmProvider",
+      ),
+    });
+    const { provider, baseUrl, apiKey, model } = llm;
 
     if (!apiKey) {
       throw new Error(
-        "autogen.agent: set WFENGINE_OPENAI_API_KEY or OPENAI_API_KEY or openAiApiKey on the node, or OLLAMA_BASE_URL / WFENGINE_OLLAMA_BASE_URL for Ollama fallback",
+        `autogen.agent: ${provider} provider selected but no API key is configured. For OpenAI set openAiApiKey, WFENGINE_OPENAI_API_KEY, or OPENAI_API_KEY. For Ollama the runtime normally uses the dummy key "ollama".`,
       );
     }
 
-    if (usedOllamaEnvFallback) {
-      context.logger.info("autogen.agent: Ollama env fallback", {
-        baseUrl,
-        model,
-      });
-    }
+    context.logger.info("autogen.agent: LLM provider selected", {
+      provider,
+      baseUrl,
+      model,
+      usedLegacyOllamaFallback: llm.usedLegacyOllamaFallback,
+    });
 
     const userContent = `Workflow payload:\n${upstreamToJsonText(upstream)}`;
     const vars = context.variables as Record<string, unknown>;
@@ -119,6 +123,7 @@ export const autogenAgentNode: NodeDefinition = {
     const text =
       c.tools?.length && c.tools.length > 0
         ? await runOpenAiToolLoop({
+            provider,
             baseUrl,
             apiKey,
             model,
@@ -130,11 +135,18 @@ export const autogenAgentNode: NodeDefinition = {
             dispatch: agentToolDispatch,
             variables: context.variables,
             openAiConfig: {
+              llmProvider: c.llmProvider,
+              llmProviderWasExplicit: Object.prototype.hasOwnProperty.call(
+                config,
+                "llmProvider",
+              ),
               openAiBaseUrl: c.openAiBaseUrl,
               openAiApiKey: c.openAiApiKey,
+              ollamaBaseUrl: c.ollamaBaseUrl,
             },
           })
         : await openAiChatCompletion({
+            provider,
             baseUrl,
             apiKey,
             model,

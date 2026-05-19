@@ -2,7 +2,9 @@ import type { AgentToolDispatch } from "@wfengine/core";
 import type { AgentToolRef } from "../schemas.js";
 import {
   openAiChatCompletion,
-  resolveOpenAiFromEnv,
+  resolveLlmConfig,
+  type LlmNodeConfig,
+  type LlmProvider,
   type ChatMessage,
 } from "./openai-chat.js";
 
@@ -108,6 +110,7 @@ function findLibraryEntry(
 }
 
 export async function runOpenAiToolLoop(opts: {
+  provider: LlmProvider;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -124,7 +127,7 @@ export async function runOpenAiToolLoop(opts: {
   tools: AgentToolRef[];
   dispatch: AgentToolDispatch | undefined;
   variables: Record<string, unknown>;
-  openAiConfig: { openAiBaseUrl?: string; openAiApiKey?: string };
+  openAiConfig: LlmNodeConfig;
   maxIterations?: number;
   /**
    * First HTTP completion only: `"required"` maps to OpenAI `tool_choice: required` so the model must call
@@ -185,9 +188,21 @@ export async function runOpenAiToolLoop(opts: {
       textRaw = await res.text();
       if (!res.ok) {
         throw new Error(
-          `OpenAI-compatible error ${res.status}: ${textRaw.slice(0, 800)}`,
+          `${opts.provider} tool-loop chat completion failed (${res.status}) at ${url}: ${textRaw.slice(0, 800)}`,
         );
       }
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        err.message.includes("tool-loop chat completion failed")
+      ) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `${opts.provider} tool-loop chat completion request failed at ${url}: ${message}`,
+        { cause: err },
+      );
     } finally {
       clearTimeout(timer);
     }
@@ -267,19 +282,20 @@ export async function runOpenAiToolLoop(opts: {
                   error: `library_agent not found: ${ref.agentId}. Include "agentLibrary" in the run request (Studio does this when the library is non-empty).`,
                 });
               } else {
-                const { baseUrl, apiKey } = resolveOpenAiFromEnv({
-                  openAiBaseUrl: opts.openAiConfig.openAiBaseUrl,
-                  openAiApiKey: opts.openAiConfig.openAiApiKey,
+                const subConfig = resolveLlmConfig({
+                  ...opts.openAiConfig,
+                  model: entry.model?.trim() || opts.model,
                 });
-                if (!apiKey) {
+                if (!subConfig.apiKey) {
                   resultText = JSON.stringify({
-                    error: "No API key for library_agent sub-call",
+                    error: `No API key for ${subConfig.provider} library_agent sub-call`,
                   });
                 } else {
                   const sub = await openAiChatCompletion({
-                    baseUrl,
-                    apiKey,
-                    model: entry.model?.trim() || opts.model,
+                    provider: subConfig.provider,
+                    baseUrl: subConfig.baseUrl,
+                    apiKey: subConfig.apiKey,
+                    model: subConfig.model,
                     messages: [
                       { role: "system", content: entry.systemPrompt },
                       {

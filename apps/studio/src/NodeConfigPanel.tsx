@@ -35,8 +35,13 @@ import {
   orchestrationCardClass,
   SingleAgentRuntimeHint,
 } from "./agent-inspector-ui.js";
-import { Bot, Eye, EyeOff } from "lucide-react";
 import {
+  clearOllamaModelCache,
+  fetchOllamaModels,
+} from "./ollama-models.js";
+import { Bot, Eye, EyeOff, RefreshCw } from "lucide-react";
+import {
+  useCallback,
   forwardRef,
   useEffect,
   useMemo,
@@ -45,7 +50,12 @@ import {
   type ComponentProps,
   type ReactElement,
 } from "react";
-import { useForm, useWatch, type FieldValues } from "react-hook-form";
+import {
+  useForm,
+  useWatch,
+  type FieldValues,
+  type UseFormRegisterReturn,
+} from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -61,14 +71,195 @@ const fieldInput = (c?: string) =>
   );
 const fieldGroup = (c?: string) => cn("mb-3.5", c);
 
-/** Stop persisting OpenAI URL/key in workflow JSON — runner uses `OPENAI_API_KEY` / `WFENGINE_OPENAI_BASE_URL` (or per-node override only via JSON). */
+/** Remove blank LLM override fields while preserving intentional per-node provider config. */
 function stripOpenAiEnvFromConfig(
   data: Record<string, unknown>,
 ): Record<string, unknown> {
   const out = { ...data };
-  delete out.openAiBaseUrl;
-  delete out.openAiApiKey;
+  for (const key of ["openAiBaseUrl", "openAiApiKey", "ollamaBaseUrl"]) {
+    if (typeof out[key] === "string" && out[key].trim().length === 0) {
+      delete out[key];
+    }
+  }
   return out;
+}
+
+function LlmProviderSection(props: {
+  providerField: UseFormRegisterReturn;
+  openAiBaseUrlField: UseFormRegisterReturn;
+  openAiApiKeyField: UseFormRegisterReturn;
+  ollamaBaseUrlField: UseFormRegisterReturn;
+  provider: unknown;
+}): ReactElement {
+  const provider = props.provider === "ollama" ? "ollama" : "openai";
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-[#14141a] px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300/85">
+        LLM provider
+      </p>
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+        <div className={fieldGroup("mb-0")}>
+          <label className={fieldLabel()}>Provider</label>
+          <select {...props.providerField} className={fieldInput()}>
+            <option value="openai">OpenAI</option>
+            <option value="ollama">Ollama</option>
+          </select>
+        </div>
+        <div className={fieldGroup("mb-0")}>
+          <label className={fieldLabel()}>
+            {provider === "ollama" ? "Ollama base URL" : "OpenAI base URL"}
+          </label>
+          <input
+            {...(provider === "ollama"
+              ? props.ollamaBaseUrlField
+              : props.openAiBaseUrlField)}
+            className={fieldInput()}
+            placeholder={
+              provider === "ollama"
+                ? "http://127.0.0.1:11434/v1"
+                : "https://api.openai.com/v1"
+            }
+            spellCheck={false}
+          />
+        </div>
+      </div>
+      {provider === "openai" ? (
+        <div className={fieldGroup("mb-0 mt-3")}>
+          <label className={fieldLabel()}>OpenAI API key override</label>
+          <SecretInput
+            {...props.openAiApiKeyField}
+            placeholder="Uses WFENGINE_OPENAI_API_KEY / OPENAI_API_KEY when empty"
+          />
+        </div>
+      ) : (
+        <p className="mt-2 text-[10px] leading-snug text-zinc-500">
+          Ollama uses OpenAI-compatible <code className="text-zinc-400">/v1</code>{" "}
+          chat completions. From Docker, use your host IP or{" "}
+          <code className="text-zinc-400">host.docker.internal</code> instead of localhost.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function OllamaAwareModelField(props: {
+  modelField: UseFormRegisterReturn;
+  setModel: (value: string) => void;
+  provider: unknown;
+  ollamaBaseUrl: unknown;
+  model: unknown;
+  label?: string;
+}): ReactElement {
+  const provider = props.provider === "ollama" ? "ollama" : "openai";
+  const baseUrl =
+    typeof props.ollamaBaseUrl === "string" ? props.ollamaBaseUrl : "";
+  const currentModel = typeof props.model === "string" ? props.model : "";
+  const [models, setModels] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadModels = useCallback(
+    async (force = false) => {
+      if (provider !== "ollama") return;
+      if (force) clearOllamaModelCache(baseUrl);
+      setLoading(true);
+      setError(null);
+      try {
+        const next = await fetchOllamaModels(baseUrl);
+        setModels(next);
+      } catch (err) {
+        setModels([]);
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [baseUrl, provider],
+  );
+
+  useEffect(() => {
+    if (provider !== "ollama") {
+      setModels([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void loadModels(false);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [loadModels, provider]);
+
+  if (provider !== "ollama") {
+    return (
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>{props.label ?? "Model"}</label>
+        <input {...props.modelField} className={fieldInput()} />
+      </div>
+    );
+  }
+
+  const options = currentModel && !models.includes(currentModel)
+    ? [currentModel, ...models]
+    : models;
+  const canUseDropdown = options.length > 0 && !error;
+
+  return (
+    <div className={fieldGroup()}>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <label className={fieldLabel("mb-0")}>{props.label ?? "Model"}</label>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-lg border border-white/[0.08] bg-[#1a1a22] px-2 py-1 text-[11px] font-medium text-zinc-300 transition hover:border-violet-400/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => void loadModels(true)}
+          disabled={loading}
+          title="Refresh Ollama models"
+        >
+          <RefreshCw
+            className={cn("h-3.5 w-3.5", loading && "animate-spin")}
+            aria-hidden
+          />
+          Refresh Models
+        </button>
+      </div>
+
+      {canUseDropdown ? (
+        <select
+          {...props.modelField}
+          className={fieldInput()}
+          value={currentModel}
+          onChange={(event) => props.setModel(event.target.value)}
+        >
+          {options.map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          {...props.modelField}
+          className={fieldInput()}
+          placeholder="qwen2.5:14b"
+          spellCheck={false}
+        />
+      )}
+
+      {loading ? (
+        <p className="mt-1.5 text-[10px] text-zinc-500">
+          Loading models from Ollama...
+        </p>
+      ) : error ? (
+        <p className="mt-1.5 text-[10px] leading-snug text-amber-300/90">
+          {error} You can still type the model name manually.
+        </p>
+      ) : models.length > 0 ? (
+        <p className="mt-1.5 text-[10px] text-zinc-500">
+          Found {models.length} model{models.length === 1 ? "" : "s"}.
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 /**
@@ -1424,6 +1615,11 @@ function MfaAgentGroupPanel(props: InspectorRenderProps): ReactElement {
       orchestrationMode:
         (parsed.success ? parsed.data.orchestrationMode : undefined) ??
         "sequential",
+      llmProvider:
+        (parsed.success ? parsed.data.llmProvider : undefined) ?? "openai",
+      openAiBaseUrl: parsed.success ? (parsed.data.openAiBaseUrl ?? "") : "",
+      openAiApiKey: parsed.success ? (parsed.data.openAiApiKey ?? "") : "",
+      ollamaBaseUrl: parsed.success ? (parsed.data.ollamaBaseUrl ?? "") : "",
       model: parsed.success ? (parsed.data.model ?? "gpt-4o-mini") : "gpt-4o-mini",
       temperature: parsed.success ? (parsed.data.temperature ?? 0.3) : 0.3,
       timeoutMs: parsed.success ? (parsed.data.timeoutMs ?? 180_000) : 180_000,
@@ -1454,6 +1650,10 @@ function MfaAgentGroupPanel(props: InspectorRenderProps): ReactElement {
       groupName: p.success ? (p.data.groupName ?? "") : "",
       orchestrationMode:
         (p.success ? p.data.orchestrationMode : undefined) ?? "sequential",
+      llmProvider: (p.success ? p.data.llmProvider : undefined) ?? "openai",
+      openAiBaseUrl: p.success ? (p.data.openAiBaseUrl ?? "") : "",
+      openAiApiKey: p.success ? (p.data.openAiApiKey ?? "") : "",
+      ollamaBaseUrl: p.success ? (p.data.ollamaBaseUrl ?? "") : "",
       model: p.success ? (p.data.model ?? "gpt-4o-mini") : "gpt-4o-mini",
       temperature: p.success ? (p.data.temperature ?? 0.3) : 0.3,
       timeoutMs: p.success ? (p.data.timeoutMs ?? 180_000) : 180_000,
@@ -1487,6 +1687,7 @@ function MfaAgentGroupPanel(props: InspectorRenderProps): ReactElement {
   }, [agentsJson, vals, selectedNode.id, updateNodeConfig]);
 
   const orchestrationMode = vals?.orchestrationMode ?? "sequential";
+  const llmProvider = vals?.llmProvider ?? "openai";
 
   const pushAgentsJson = (next: string) => {
     setAgentsJson(next);
@@ -1532,10 +1733,23 @@ function MfaAgentGroupPanel(props: InspectorRenderProps): ReactElement {
         <label className={fieldLabel()}>Group name (optional)</label>
         <input {...form.register("groupName")} className={fieldInput()} />
       </div>
-      <div className={fieldGroup()}>
-        <label className={fieldLabel()}>Model (shared)</label>
-        <input {...form.register("model")} className={fieldInput()} />
-      </div>
+      <LlmProviderSection
+        provider={llmProvider}
+        providerField={form.register("llmProvider")}
+        openAiBaseUrlField={form.register("openAiBaseUrl")}
+        openAiApiKeyField={form.register("openAiApiKey")}
+        ollamaBaseUrlField={form.register("ollamaBaseUrl")}
+      />
+      <OllamaAwareModelField
+        label="Model (shared)"
+        provider={llmProvider}
+        ollamaBaseUrl={vals?.ollamaBaseUrl}
+        model={vals?.model}
+        modelField={form.register("model")}
+        setModel={(value) =>
+          form.setValue("model", value, { shouldDirty: true })
+        }
+      />
       <div className={fieldGroup()}>
         <label className={fieldLabel()}>Temperature</label>
         <input type="number" step="0.1" {...form.register("temperature")} className={fieldInput()} />
@@ -1640,6 +1854,7 @@ function AutogenAgentPanel(props: InspectorRenderProps): ReactElement {
 
   const runtimeVal = (vals?.runtime as string | undefined) ?? "openai_compatible";
   const libraryAgentId = vals?.libraryAgentId as string | undefined;
+  const llmProvider = vals?.llmProvider ?? "openai";
 
   return (
     <div className="mt-2 space-y-4">
@@ -1708,10 +1923,22 @@ function AutogenAgentPanel(props: InspectorRenderProps): ReactElement {
         <label className={fieldLabel()}>Agent name</label>
         <input {...form.register("agentName")} className={fieldInput()} />
       </div>
-      <div className={fieldGroup()}>
-        <label className={fieldLabel()}>Model</label>
-        <input {...form.register("model")} className={fieldInput()} />
-      </div>
+      <LlmProviderSection
+        provider={llmProvider}
+        providerField={form.register("llmProvider")}
+        openAiBaseUrlField={form.register("openAiBaseUrl")}
+        openAiApiKeyField={form.register("openAiApiKey")}
+        ollamaBaseUrlField={form.register("ollamaBaseUrl")}
+      />
+      <OllamaAwareModelField
+        provider={llmProvider}
+        ollamaBaseUrl={vals?.ollamaBaseUrl}
+        model={vals?.model}
+        modelField={form.register("model")}
+        setModel={(value) =>
+          form.setValue("model", value, { shouldDirty: true })
+        }
+      />
       <div className={fieldGroup()}>
         <label className={fieldLabel()}>System prompt</label>
         <textarea {...form.register("systemPrompt")} rows={5} className={fieldInput("min-h-[80px] text-xs")} />
@@ -1767,6 +1994,10 @@ function formatForceToolsIndicesForForm(raw: unknown): string {
 
 type AutogenMultiAgentFormVals = {
   teamName: string;
+  llmProvider: "openai" | "ollama";
+  openAiBaseUrl: string;
+  openAiApiKey: string;
+  ollamaBaseUrl: string;
   model: string;
   temperature: number;
   timeoutMs: number;
@@ -1806,6 +2037,11 @@ function AutogenMultiAgentPanel(props: InspectorRenderProps): ReactElement {
   const form = useForm<AutogenMultiAgentFormVals>({
     defaultValues: {
       teamName: parsed.success ? (parsed.data.teamName ?? "") : "",
+      llmProvider:
+        (parsed.success ? parsed.data.llmProvider : undefined) ?? "openai",
+      openAiBaseUrl: parsed.success ? (parsed.data.openAiBaseUrl ?? "") : "",
+      openAiApiKey: parsed.success ? (parsed.data.openAiApiKey ?? "") : "",
+      ollamaBaseUrl: parsed.success ? (parsed.data.ollamaBaseUrl ?? "") : "",
       model: parsed.success ? (parsed.data.model ?? "gpt-4o-mini") : "gpt-4o-mini",
       temperature: parsed.success ? (parsed.data.temperature ?? 0.3) : 0.3,
       timeoutMs: parsed.success ? (parsed.data.timeoutMs ?? 240_000) : 240_000,
@@ -1855,6 +2091,10 @@ function AutogenMultiAgentPanel(props: InspectorRenderProps): ReactElement {
     const nextCfg = cfg as Record<string, unknown>;
     form.reset({
       teamName: p.success ? (p.data.teamName ?? "") : "",
+      llmProvider: (p.success ? p.data.llmProvider : undefined) ?? "openai",
+      openAiBaseUrl: p.success ? (p.data.openAiBaseUrl ?? "") : "",
+      openAiApiKey: p.success ? (p.data.openAiApiKey ?? "") : "",
+      ollamaBaseUrl: p.success ? (p.data.ollamaBaseUrl ?? "") : "",
       model: p.success ? (p.data.model ?? "gpt-4o-mini") : "gpt-4o-mini",
       temperature: p.success ? (p.data.temperature ?? 0.3) : 0.3,
       timeoutMs: p.success ? (p.data.timeoutMs ?? 240_000) : 240_000,
@@ -1927,6 +2167,7 @@ function AutogenMultiAgentPanel(props: InspectorRenderProps): ReactElement {
 
   const rt = vals?.runtime ?? "orchestrated_openai";
   const maxTurnsVal = vals?.maxTurns ?? 8;
+  const llmProvider = vals?.llmProvider ?? "openai";
 
   const pushAgentsJson = (next: string) => {
     setAgentsJson(next);
@@ -1977,6 +2218,13 @@ function AutogenMultiAgentPanel(props: InspectorRenderProps): ReactElement {
         <label className={fieldLabel()}>Team name</label>
         <input {...form.register("teamName")} className={fieldInput()} />
       </div>
+      <LlmProviderSection
+        provider={llmProvider}
+        providerField={form.register("llmProvider")}
+        openAiBaseUrlField={form.register("openAiBaseUrl")}
+        openAiApiKeyField={form.register("openAiApiKey")}
+        ollamaBaseUrlField={form.register("ollamaBaseUrl")}
+      />
       <div className={fieldGroup()}>
         <label className={fieldLabel()}>Shared tools</label>
         <AgentToolsPicker
@@ -2044,10 +2292,16 @@ function AutogenMultiAgentPanel(props: InspectorRenderProps): ReactElement {
         <label className={fieldLabel()}>Python module path</label>
         <input {...form.register("pythonModulePath")} className={fieldInput()} />
       </div>
-      <div className={fieldGroup()}>
-        <label className={fieldLabel()}>Model (shared)</label>
-        <input {...form.register("model")} className={fieldInput()} />
-      </div>
+      <OllamaAwareModelField
+        label="Model (shared)"
+        provider={llmProvider}
+        ollamaBaseUrl={vals?.ollamaBaseUrl}
+        model={vals?.model}
+        modelField={form.register("model")}
+        setModel={(value) =>
+          form.setValue("model", value, { shouldDirty: true })
+        }
+      />
       <div className={fieldGroup()}>
         <label className={fieldLabel()}>Temperature</label>
         <input type="number" step="0.1" {...form.register("temperature")} className={fieldInput()} />

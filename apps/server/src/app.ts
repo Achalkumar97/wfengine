@@ -14,6 +14,7 @@ import { registerWorkflowRoutes } from "./routes/workflows.js";
 import { registerExecutionRoutes } from "./routes/executions.js";
 import { registerHookRoutes } from "./routes/hooks.js";
 import { registerCronRoutes } from "./routes/cron.js";
+import { registerOllamaRoutes } from "./routes/ollama.js";
 import { registerRunsInlineRoutes } from "./routes/runs-inline.js";
 
 export async function buildApp(deps: {
@@ -74,6 +75,7 @@ export async function buildApp(deps: {
   await registerExecutionRoutes(app, deps);
   await registerHookRoutes(app, deps);
   await registerCronRoutes(app, deps.prisma, deps.queue);
+  await registerOllamaRoutes(app);
   await registerRunsInlineRoutes(app, deps.engine);
 
   app.get("/health", async () => ({ ok: true }));

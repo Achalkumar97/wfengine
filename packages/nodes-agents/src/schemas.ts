@@ -29,6 +29,9 @@ export const AgentPersonaSchema = z
 
 export type AgentPersona = z.infer<typeof AgentPersonaSchema>;
 
+const LlmProviderSchema = z.enum(["openai", "ollama"]).optional().default("openai");
+const LlmBaseUrlSchema = z.union([z.string().url(), z.literal("")]).optional();
+
 /** Microsoft Agent Framework–style group: orchestrated LLM agents sharing workflow context. */
 export const MfaAgentGroupConfigSchema = z.object({
   /** Human-readable label in logs */
@@ -44,8 +47,12 @@ export const MfaAgentGroupConfigSchema = z.object({
     .default("sequential"),
   agents: z.array(AgentPersonaSchema).min(1).max(16),
   model: z.string().min(1).optional().default("gpt-4o-mini"),
-  openAiBaseUrl: z.union([z.string().url(), z.literal("")]).optional(),
+  /** Selects the OpenAI-compatible provider for this node. */
+  llmProvider: LlmProviderSchema,
+  openAiBaseUrl: LlmBaseUrlSchema,
   openAiApiKey: z.string().optional().describe("secret:openai_api_key"),
+  /** OpenAI-compatible Ollama base URL, usually http://127.0.0.1:11434/v1. */
+  ollamaBaseUrl: LlmBaseUrlSchema,
   temperature: z.coerce.number().min(0).max(2).optional().default(0.3),
   /** Wall-clock cap for the whole node */
   timeoutMs: z.coerce.number().int().min(5_000).max(900_000).optional().default(180_000),
@@ -86,8 +93,12 @@ export const AutogenAgentConfigBaseSchema = z.object({
   /** Required unless `libraryAgentId` is set (merged from `variables.agentLibrary` at run time). */
   systemPrompt: z.string().max(32_000).optional(),
   model: z.string().min(1).optional().default("gpt-4o-mini"),
-  openAiBaseUrl: z.union([z.string().url(), z.literal("")]).optional(),
+  /** Selects the OpenAI-compatible provider for this node. */
+  llmProvider: LlmProviderSchema,
+  openAiBaseUrl: LlmBaseUrlSchema,
   openAiApiKey: z.string().optional().describe("secret:openai_api_key"),
+  /** OpenAI-compatible Ollama base URL, usually http://127.0.0.1:11434/v1. */
+  ollamaBaseUrl: LlmBaseUrlSchema,
   temperature: z.coerce.number().min(0).max(2).optional().default(0.3),
   timeoutMs: z.coerce.number().int().min(5_000).max(900_000).optional().default(120_000),
   /**
@@ -149,8 +160,12 @@ export const AutogenMultiAgentConfigSchema = z.object({
   agents: z.array(AgentPersonaSchema).min(2).max(16),
   maxTurns: z.coerce.number().int().min(1).max(40).optional().default(8),
   model: z.string().min(1).optional().default("gpt-4o-mini"),
-  openAiBaseUrl: z.union([z.string().url(), z.literal("")]).optional(),
+  /** Selects the OpenAI-compatible provider for this node. */
+  llmProvider: LlmProviderSchema,
+  openAiBaseUrl: LlmBaseUrlSchema,
   openAiApiKey: z.string().optional().describe("secret:openai_api_key"),
+  /** OpenAI-compatible Ollama base URL, usually http://127.0.0.1:11434/v1. */
+  ollamaBaseUrl: LlmBaseUrlSchema,
   temperature: z.coerce.number().min(0).max(2).optional().default(0.3),
   timeoutMs: z.coerce.number().int().min(5_000).max(900_000).optional().default(240_000),
   /**

@@ -2,9 +2,9 @@ import type { AgentToolDispatch, WorkflowLogger } from "@wfengine/core";
 import type { AgentToolRef } from "../schemas.js";
 import { formatAgentOrchestrationFailure } from "./agent-failure.js";
 import {
-  effectiveLlmModel,
   openAiChatCompletion,
-  resolveOpenAiFromEnv,
+  resolveLlmConfig,
+  type LlmNodeConfig,
   type ChatMessage,
 } from "./openai-chat.js";
 import { runOpenAiToolLoop } from "./openai-tool-loop.js";
@@ -22,7 +22,7 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
   temperature: number;
   timeoutMs: number;
   taskInstructions?: string | undefined;
-  openAi: { openAiBaseUrl?: string; openAiApiKey?: string };
+  openAi: LlmNodeConfig;
   upstream: Record<string, unknown>;
   logger: WorkflowLogger;
   maxTurns: number;
@@ -41,23 +41,31 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
   transcript: { agent: string; content: string }[];
   finalAnswer: string;
 }> {
-  const resolved = resolveOpenAiFromEnv(opts.openAi);
-  const { baseUrl, apiKey, usedOllamaEnvFallback } = resolved;
-  const model = effectiveLlmModel(opts.model, usedOllamaEnvFallback);
+  const llm = resolveLlmConfig({ ...opts.openAi, model: opts.model });
+  const { provider, baseUrl, apiKey, model } = llm;
 
   if (!apiKey) {
     throw formatAgentOrchestrationFailure({
       nodeType: "autogen.multi-agent",
       phase: "openai_setup",
       underlyingMessage:
-        "autogen.multi-agent: set WFENGINE_OPENAI_API_KEY or OPENAI_API_KEY (or openAiApiKey on the node), or set OLLAMA_BASE_URL / WFENGINE_OLLAMA_BASE_URL for self-hosted Ollama.",
+        `autogen.multi-agent: ${provider} provider selected but no API key is configured. For OpenAI set openAiApiKey, WFENGINE_OPENAI_API_KEY, or OPENAI_API_KEY. For Ollama the runtime normally uses the dummy key "ollama".`,
     });
   }
 
-  if (usedOllamaEnvFallback) {
-    opts.logger.info("autogen.multi-agent: Ollama env fallback (no OpenAI API key)", {
+  opts.logger.info("autogen.multi-agent: LLM provider selected", {
+    provider,
+    baseUrl,
+    model,
+    usedLegacyOllamaFallback: llm.usedLegacyOllamaFallback,
+  });
+
+  if (provider === "ollama" && opts.tools?.length) {
+    opts.logger.warn("autogen.multi-agent: Ollama selected with tools", {
       baseUrl,
       model,
+      message:
+        "Many local models do not reliably emit OpenAI-compatible tool_calls; a linear workflow is usually more reliable for Ollama.",
     });
   }
 
@@ -122,6 +130,7 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
       const text =
         opts.tools?.length && opts.tools.length > 0
           ? await runOpenAiToolLoop({
+              provider,
               baseUrl,
               apiKey,
               model,
@@ -132,14 +141,18 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
               dispatch: opts.agentToolDispatch,
               variables: opts.variables ?? {},
               openAiConfig: {
+                llmProvider: opts.openAi.llmProvider,
+                llmProviderWasExplicit: opts.openAi.llmProviderWasExplicit,
                 openAiBaseUrl: opts.openAi.openAiBaseUrl,
                 openAiApiKey: opts.openAi.openAiApiKey,
+                ollamaBaseUrl: opts.openAi.ollamaBaseUrl,
               },
               maxIterations: 12,
               initialToolChoice:
                 forceTools && opts.tools.length > 0 ? "required" : "auto",
             })
           : await openAiChatCompletion({
+              provider,
               baseUrl,
               apiKey,
               model,

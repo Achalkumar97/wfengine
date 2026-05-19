@@ -3,10 +3,10 @@ import { z } from "zod";
 import { MfaAgentGroupConfigSchema } from "../schemas.js";
 import { formatAgentOrchestrationFailure } from "./agent-failure.js";
 import {
-  effectiveLlmModel,
   openAiChatCompletion,
-  resolveOpenAiFromEnv,
+  resolveLlmConfig,
   type ChatMessage,
+  type LlmNodeConfig,
 } from "./openai-chat.js";
 import { upstreamToJsonText } from "./upstream-payload.js";
 import type { ResolvedAgentPersona } from "./resolve-agent-library.js";
@@ -14,7 +14,7 @@ import type { ResolvedAgentPersona } from "./resolve-agent-library.js";
 type Persona = ResolvedAgentPersona;
 type GroupCfg = Omit<z.infer<typeof MfaAgentGroupConfigSchema>, "agents"> & {
   agents: ResolvedAgentPersona[];
-};
+} & LlmNodeConfig;
 
 /** Models often wrap JSON in ```json fences despite "ONLY JSON" instructions. */
 function stripMarkdownJsonFence(text: string): string {
@@ -62,22 +62,24 @@ export async function runMfaAgentGroupOrchestration(opts: {
   finalAnswer: string;
   structured?: Record<string, unknown>;
 }> {
-  const resolved = resolveOpenAiFromEnv(opts.config);
-  const { baseUrl, apiKey, usedOllamaEnvFallback } = resolved;
-  const model = effectiveLlmModel(opts.config.model, usedOllamaEnvFallback);
+  const llm = resolveLlmConfig(opts.config);
+  const { provider, baseUrl, apiKey, model } = llm;
 
   if (!apiKey) {
     throw formatAgentOrchestrationFailure({
       nodeType: "mfa.agent-group",
       phase: "openai_setup",
       underlyingMessage:
-        "mfa.agent-group: set WFENGINE_OPENAI_API_KEY or OPENAI_API_KEY or openAiApiKey on the node, or OLLAMA_BASE_URL / WFENGINE_OLLAMA_BASE_URL for Ollama fallback",
+        `mfa.agent-group: ${provider} provider selected but no API key is configured. For OpenAI set openAiApiKey, WFENGINE_OPENAI_API_KEY, or OPENAI_API_KEY. For Ollama the runtime normally uses the dummy key "ollama".`,
     });
   }
 
-  if (usedOllamaEnvFallback) {
-    opts.logger.info("mfa.agent-group: Ollama env fallback", { baseUrl, model });
-  }
+  opts.logger.info("mfa.agent-group: LLM provider selected", {
+    provider,
+    baseUrl,
+    model,
+    usedLegacyOllamaFallback: llm.usedLegacyOllamaFallback,
+  });
 
   const upstreamText = upstreamToJsonText(opts.upstream);
   const task =
@@ -94,6 +96,7 @@ export async function runMfaAgentGroupOrchestration(opts: {
         model,
       });
       raw = await openAiChatCompletion({
+        provider,
         baseUrl,
         apiKey,
         model,
@@ -180,6 +183,7 @@ export async function runMfaAgentGroupOrchestration(opts: {
     });
     try {
       const text = await openAiChatCompletion({
+        provider,
         baseUrl,
         apiKey,
         model,

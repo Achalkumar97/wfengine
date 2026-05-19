@@ -170,8 +170,14 @@ export const autogenMultiAgentNode: NodeDefinition = {
       timeoutMs: c.timeoutMs ?? 240_000,
       taskInstructions: c.taskInstructions,
       openAi: {
+        llmProvider: c.llmProvider,
+        llmProviderWasExplicit: Object.prototype.hasOwnProperty.call(
+          config,
+          "llmProvider",
+        ),
         openAiBaseUrl: c.openAiBaseUrl,
         openAiApiKey: c.openAiApiKey,
+        ollamaBaseUrl: c.ollamaBaseUrl,
       },
       upstream,
       logger: context.logger,
