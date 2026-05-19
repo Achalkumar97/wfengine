@@ -323,52 +323,68 @@ function useDebouncedValidConfig<T extends FieldValues>(
   debounceMs = 200,
   options?: { stripOpenAiEnv?: boolean },
 ): void {
+  // Keep mutable references so cleanup functions can always read the latest
+  // values without capturing stale closures.
   const mergeRef = useRef(mergeBase);
   mergeRef.current = mergeBase;
 
+  const watchRef = useRef(watchValues);
+  watchRef.current = watchValues;
+
+  const nodeIdRef = useRef(nodeId);
+  nodeIdRef.current = nodeId;
+
+  const updateRef = useRef(updateNodeConfig);
+  updateRef.current = updateNodeConfig;
+
+  const stripRef = useRef(options?.stripOpenAiEnv);
+  stripRef.current = options?.stripOpenAiEnv;
+
+  // Core save logic — reads from refs so it is safe to call from any cleanup.
+  const saveNow = useCallback(() => {
+    const vals = watchRef.current;
+    const base = mergeRef.current;
+    const nid = nodeIdRef.current;
+    const update = updateRef.current;
+    const strip = stripRef.current;
+    const baseStripped = strip
+      ? stripOpenAiEnvFromConfig({ ...base })
+      : { ...base };
+    const full = schema.safeParse(vals);
+    if (full.success) {
+      let data = full.data as Record<string, unknown>;
+      if (strip) data = stripOpenAiEnvFromConfig(data);
+      update(nid, data);
+      return;
+    }
+    if (schema instanceof z.ZodObject) {
+      const partialResult = schema.partial().safeParse(vals);
+      if (partialResult.success) {
+        const merged: Record<string, unknown> = { ...baseStripped };
+        for (const [key, val] of Object.entries(partialResult.data)) {
+          if (val !== undefined) merged[key] = val;
+        }
+        update(nid, strip ? stripOpenAiEnvFromConfig(merged) : merged);
+      }
+    }
+  }, [schema]); // schema is a module-level constant — always stable
+
+  // Debounced save triggered by every value change.
   useEffect(() => {
-    const t = window.setTimeout(() => {
-      const base = mergeRef.current;
-      const baseStripped = options?.stripOpenAiEnv
-        ? stripOpenAiEnvFromConfig({ ...base })
-        : { ...base };
-      const full = schema.safeParse(watchValues);
-      if (full.success) {
-        let data = full.data as Record<string, unknown>;
-        if (options?.stripOpenAiEnv) {
-          data = stripOpenAiEnvFromConfig(data);
-        }
-        updateNodeConfig(nodeId, data);
-        return;
-      }
-      if (schema instanceof z.ZodObject) {
-        const partialResult = schema.partial().safeParse(watchValues);
-        if (partialResult.success) {
-          const merged: Record<string, unknown> = { ...baseStripped };
-          for (const [key, val] of Object.entries(partialResult.data)) {
-            if (val !== undefined) {
-              merged[key] = val;
-            }
-          }
-          updateNodeConfig(
-            nodeId,
-            options?.stripOpenAiEnv
-              ? stripOpenAiEnvFromConfig(merged)
-              : merged,
-          );
-        }
-      }
-    }, debounceMs);
+    const t = window.setTimeout(saveNow, debounceMs);
     return () => window.clearTimeout(t);
-  }, [
-    watchValues,
-    schema,
-    nodeId,
-    updateNodeConfig,
-    debounceMs,
-    options?.stripOpenAiEnv,
-  ]);
+  }, [watchValues, saveNow, debounceMs]);
+
+  // ── CRITICAL FIX ─────────────────────────────────────────────────────────
+  // When the user switches tabs the Node panel unmounts. The debounce cleanup
+  // above cancels the pending timer BEFORE it writes to React state, so on
+  // return the form reinitialises from the old (pre-typing) config.
+  // This effect’s cleanup flushes the latest values immediately on unmount.
+  useEffect(() => {
+    return saveNow; // cleanup = flush right now
+  }, [saveNow]);
 }
+
 
 function JsonFallback(props: InspectorRenderProps): ReactElement {
   const { selectedNode, updateNodeConfig } = props;
