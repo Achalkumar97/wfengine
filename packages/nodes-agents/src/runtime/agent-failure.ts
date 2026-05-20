@@ -9,7 +9,8 @@ export type AgentOrchestrationFailurePayload = {
     | "single_completion"
     | "openai_setup"
     | "python_autogen_bridge"
-    | "workflow_tools";
+    | "workflow_tools"
+    | "validation_gate";
   agentName?: string;
   /** 0-based round-robin index (autogen.multi-agent) */
   turn?: number;

@@ -463,7 +463,29 @@ export default function App(): ReactElement {
     queueMicrotask(() => {
       const el = canvasRef.current;
       if (!el) return;
-      el.importWorkflowDefinition(def);
+
+      // Sanitize workflow definition: convert empty strings to undefined for optional fields
+      // This prevents validation errors for fields like attachInputContentAsFilename
+      const sanitizeNodeConfig = (config: Record<string, unknown>): Record<string, unknown> => {
+        const sanitized: Record<string, unknown> = { ...config };
+        for (const [key, val] of Object.entries(sanitized)) {
+          if (typeof val === "string") {
+            const trimmed = val.trim();
+            sanitized[key] = trimmed.length > 0 ? trimmed : undefined;
+          }
+        }
+        return sanitized;
+      };
+
+      const sanitizedDef = {
+        ...def,
+        nodes: def.nodes.map((node) => ({
+          ...node,
+          config: node.config ? sanitizeNodeConfig(node.config as Record<string, unknown>) : node.config,
+        })),
+      };
+
+      el.importWorkflowDefinition(sanitizedDef);
       const nodes = el.getNodes();
       const edges = el.getEdges();
       // Guard: ensure nodes/edges are arrays before saving

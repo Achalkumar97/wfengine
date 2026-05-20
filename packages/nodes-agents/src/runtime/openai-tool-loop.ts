@@ -569,9 +569,44 @@ export async function runOpenAiToolLoop(opts: {
           toolCallIdValid: Boolean(call.id && call.id.trim().length > 0),
         });
 
-        let resultText: string;
+        let resultText: string = "";
+        let validationFailed = false;
 
-        if (!ref) {
+        // ── TOOL ARGUMENT PRE-VALIDATION ─────────────────────────────────────
+        // Validate required arguments before executing tools to prevent API errors
+        if (ref?.kind === "workflow_node") {
+          const requiredFields: Record<string, string[]> = {
+            "send-email": ["subject", "text", "to"],
+            "send-slack": ["text"],
+          };
+
+          // Extract node type from nodeId (e.g., "send-email" from "send-email-abc123")
+          const nodeType = ref.nodeId.split("-")[0] + "-" + ref.nodeId.split("-")[1] || ref.nodeId;
+          const required = requiredFields[nodeType] || [];
+
+          for (const field of required) {
+            const value = parsedArgs[field];
+            if (!value || (typeof value === "string" && value.trim().length === 0)) {
+              resultText = safeJsonStringify({
+                error: `Tool execution blocked: required field '${field}' is missing or empty for node '${ref.nodeId}'. The agent must provide this field in the tool call arguments.`,
+              });
+              dbg.warn("===== TOOL ARGUMENT VALIDATION FAILED =====", {
+                turn: iter,
+                toolCallId: call.id,
+                toolName,
+                missingField: field,
+                nodeType,
+                requiredFields: required,
+              });
+              validationFailed = true;
+              break;
+            }
+          }
+        }
+
+        if (validationFailed) {
+          // Skip execution, resultText already set with error
+        } else if (!ref) {
           resultText = safeJsonStringify({
             error: `Unknown tool function: ${fn}. Available: ${opts.tools.map((_, i) => toolFnName(i)).join(", ")}`,
           });

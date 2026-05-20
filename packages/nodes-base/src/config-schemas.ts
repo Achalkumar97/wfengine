@@ -4,6 +4,34 @@
  */
 import { z } from "zod";
 
+/**
+ * Reusable helper for optional non-empty strings.
+ * Converts empty strings to undefined before validation.
+ * This prevents form inputs from sending "" (empty string) which fails .min(1) validation
+ * even though the field is marked as .optional().
+ *
+ * Usage:
+ *   attachInputContentAsFilename: optionalNonEmptyString(255),
+ *
+ * Behavior:
+ *   undefined => valid (undefined)
+ *   "" => valid (converted to undefined)
+ *   "report.txt" => valid
+ *   "  " => valid (converted to undefined after trim)
+ */
+export const optionalNonEmptyString = (maxLength?: number) => {
+  const base = z.string().min(1).optional();
+  const processed = z.preprocess(
+    (v) => {
+      if (typeof v !== "string") return v;
+      const trimmed = v.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    },
+    base,
+  );
+  return maxLength ? processed.pipe(z.string().max(maxLength).optional()) : processed;
+};
+
 export const HttpRequestConfigSchema = z.object({
   /** Absolute `https://...` URL, or a path starting with `/` if `WFENGINE_HTTP_BASE_URL` is set on the worker. */
   url: z.string().min(1),
@@ -11,6 +39,8 @@ export const HttpRequestConfigSchema = z.object({
     .enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
     .optional()
     .default("GET"),
+  /** API key that will be automatically added to the `Authorization` header as `Bearer <apiKey>`. */
+  apiKey: z.string().optional().describe("secret:api_key"),
   headers: z.record(z.string()).optional(),
   body: z.union([z.string(), z.record(z.unknown())]).optional(),
   timeoutMs: z.number().positive().optional().default(30_000),
@@ -45,7 +75,7 @@ export const EmailSendConfigSchema = z.object({
    * When `attachments` are not supplied via merged input and merged input has a string
    * `content` (e.g. from file.read), attach it using this filename.
    */
-  attachInputContentAsFilename: z.string().min(1).max(255).optional(),
+  attachInputContentAsFilename: optionalNonEmptyString(255),
   /**
    * When true, the workflow engine skips this node in the linear DAG pass so it is
    * only executed via `workflow_node` agent tools (avoids running SMTP/file writes twice).
@@ -637,7 +667,7 @@ export const LlmGenerateUnitTestsConfigSchema = z.object({
   /** Optional when the same fields exist on merged workflow input. */
   gitOwner: z.string().optional(),
   gitRepo: z.string().optional(),
-  gitRef: z.string().min(1).optional(),
+  gitRef: optionalNonEmptyString(),
   /** Optional override; otherwise inherited from upstream `githubToken`. */
   githubToken: z.string().optional().describe("secret:github_token"),
 });

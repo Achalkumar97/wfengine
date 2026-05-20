@@ -145,6 +145,37 @@ export async function runOrchestratedOpenAiMultiAgent(opts: {
     const elapsed = Date.now() - orchestrationStartedAt;
     const remaining = Math.max(5_000, opts.timeoutMs - elapsed);
 
+    // ── VALIDATION GATE BEFORE EXECUTOR TURN ───────────────────────────────
+    // If this is the last turn (executor), validate that required state is present
+    const isExecutorTurn = turn === opts.maxTurns - 1;
+    if (isExecutorTurn && opts.tools?.length && opts.tools.length > 0) {
+      dbg.info("autogen.multi-agent: ===== VALIDATION GATE BEFORE EXECUTOR =====", {
+        turn,
+        agent: agent.name,
+        toolCount: opts.tools.length,
+      });
+
+      // Check if transcript has meaningful content from previous agents
+      const hasPreviousContent = transcript.some((t) => t.content.trim().length > 50);
+      if (!hasPreviousContent) {
+        throw formatAgentOrchestrationFailure({
+          nodeType: "autogen.multi-agent",
+          phase: "validation_gate",
+          agentName: agent.name,
+          turn,
+          turnLabel: `${turn + 1} of ${opts.maxTurns}`,
+          underlyingMessage:
+            "Executor turn reached but previous agents produced insufficient content. Ensure researcher and comparator agents output meaningful data before the executor attempts to call tools.",
+        });
+      }
+
+      dbg.info("autogen.multi-agent: validation gate passed", {
+        turn,
+        agent: agent.name,
+        previousContentCount: transcript.filter((t) => t.content.trim().length > 50).length,
+      });
+    }
+
     messages.push({
       role: "user",
       content: `Turn for **${agent.name}**: ${agent.systemPrompt}`,

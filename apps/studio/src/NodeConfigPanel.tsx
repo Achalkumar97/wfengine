@@ -1,6 +1,17 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { cn, type InspectorRenderProps } from "@wfengine/ui";
 import { AgentToolsPicker } from "./AgentToolsPicker.js";
+
+/**
+ * Normalizes optional string values: converts empty strings to undefined.
+ * This prevents form inputs from persisting "" (empty string) for optional fields,
+ * which would fail .min(1) validation even though the field is marked as .optional().
+ */
+const normalizeOptionalString = (v?: string): string | undefined => {
+  if (v === undefined || v === null) return undefined;
+  const trimmed = v.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
 import {
   CronTriggerConfigSchema,
   EmailReadConfigSchema,
@@ -351,14 +362,22 @@ function useDebouncedValidConfig<T extends FieldValues>(
       ? stripOpenAiEnvFromConfig({ ...base })
       : { ...base };
     const merged: Record<string, unknown> = { ...baseStripped };
-    
+
     // We want to persist EXACTLY what the user typed into the graph node,
     // even if it's currently invalid (like an empty string for a required field).
     // If we only save on success, their WIP form drops on unmount.
-    
+
     // 1. Blindly apply all current form values
     for (const [key, val] of Object.entries(vals)) {
-      if (val !== undefined) merged[key] = val;
+      if (val !== undefined) {
+        // Normalize optional string fields: convert empty strings to undefined
+        // This prevents validation errors for optional fields with .min(1) constraint
+        if (typeof val === "string") {
+          merged[key] = normalizeOptionalString(val);
+        } else {
+          merged[key] = val;
+        }
+      }
     }
 
     // 2. Coerce types where possible so that numbers/booleans are stored correctly
@@ -487,6 +506,7 @@ function CronPanel(props: InspectorRenderProps): ReactElement {
 function buildHttpFromForm(values: {
   url: string;
   method: string;
+  apiKey?: string | undefined;
   headersJson?: string | undefined;
   bodyJson?: string | undefined;
   timeoutMs: number;
@@ -513,6 +533,7 @@ function buildHttpFromForm(values: {
   return {
     url: values.url,
     method: values.method || "GET",
+    apiKey: values.apiKey,
     headers,
     body,
     timeoutMs: Number(values.timeoutMs) || 30_000,
@@ -526,6 +547,7 @@ const HttpFormSchema = z.object({
     .enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
     .optional()
     .default("GET"),
+  apiKey: z.string().optional(),
   headersJson: z.string().optional(),
   bodyJson: z.string().optional(),
   timeoutMs: z.coerce.number().positive().optional().default(30_000),
@@ -560,6 +582,7 @@ function HttpPanel(props: InspectorRenderProps): ReactElement {
       method:
         (cfg.method as string) ||
         ("GET" as "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"),
+      apiKey: typeof cfg.apiKey === "string" ? cfg.apiKey : "",
       headersJson: h,
       bodyJson: bodyStr,
       timeoutMs: typeof cfg.timeoutMs === "number" ? cfg.timeoutMs : 30_000,
@@ -609,6 +632,15 @@ function HttpPanel(props: InspectorRenderProps): ReactElement {
             ),
           )}
         </select>
+      </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>API Key (optional)</label>
+        <input
+          type="password"
+          {...form.register("apiKey")}
+          className={fieldInput()}
+          placeholder="Bearer token or API key"
+        />
       </div>
       <div className={fieldGroup()}>
         <label className={fieldLabel()}>Headers (JSON object)</label>

@@ -95,6 +95,7 @@ export const httpRequestNode: NodeDefinition = {
         method: c.method,
         headers: {
           "content-type": "application/json",
+          ...(c.apiKey ? { "Authorization": `Bearer ${c.apiKey}` } : {}),
           ...c.headers,
         },
         body:

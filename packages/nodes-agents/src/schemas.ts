@@ -225,6 +225,47 @@ export const AutogenMultiAgentOutputSchema = z.union([
   AutogenMultiAgentSuccessOutputSchema,
 ]);
 
+/**
+ * Structured state schema for multi-agent workflows.
+ * Agents should output JSON matching this schema instead of free text.
+ * This enables reliable state passing between agents and validation.
+ */
+export const ProductCandidateSchema = z.object({
+  name: z.string().min(1),
+  price: z.string().optional(),
+  features: z.array(z.string()).optional(),
+  source: z.string().optional(),
+  evidence: z.string().optional(),
+});
+
+export const ComparisonResultSchema = z.object({
+  topPick: z.string().optional(),
+  alternatives: z.array(z.string()).optional(),
+  risks: z.array(z.string()).optional(),
+  reasoning: z.string().optional(),
+});
+
+export const EmailContentSchema = z.object({
+  subject: z.string().min(1),
+  text: z.string().min(1),
+  html: z.string().optional(),
+  to: z.union([z.string().min(1), z.array(z.string().min(1))]),
+});
+
+export const SlackContentSchema = z.object({
+  text: z.string().min(1),
+  channel: z.string().optional(),
+});
+
+export const ProductComparisonStateSchema = z.object({
+  product: z.string().optional(),
+  budgetInr: z.coerce.number().optional(),
+  candidates: z.array(ProductCandidateSchema).optional(),
+  comparison: ComparisonResultSchema.optional(),
+  email: EmailContentSchema.optional(),
+  slack: SlackContentSchema.optional(),
+});
+
 /** Browser-safe re-exports (avoid `@wfengine/nodes-agents` barrel → node runtime). */
 export {
   AgentToolRefSchema,

@@ -64,6 +64,13 @@ export const slackSendNode: NodeDefinition = {
       text = template;
     }
 
+    // Validate that text is non-empty after interpolation/fallback
+    if (!text || text.trim().length === 0) {
+      throw new Error(
+        "slack.send: message text is empty after template interpolation and upstream payload fallback. Either provide a non-empty text field in config, or ensure upstream inputData contains meaningful data for the fallback payload.",
+      );
+    }
+
     context.logger.info("Slack chat.postMessage", { channel: c.channel });
 
     const res = await client.chat.postMessage({
