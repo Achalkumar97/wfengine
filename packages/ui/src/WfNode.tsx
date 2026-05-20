@@ -5,7 +5,7 @@ import {
   deriveAgentBucketRows,
   isAgentBucketNodeType,
   supportsCanvasAgentAdd,
-} from "./agentCanvasBucket.js";
+} from "./AgentCanvasBucket.js";
 import { useCanvasAgentUi } from "./CanvasAgentUiContext.js";
 import type { WfNodeData } from "./exportWorkflow.js";
 import { cn } from "./cn.js";

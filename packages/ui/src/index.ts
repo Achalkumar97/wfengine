@@ -26,7 +26,7 @@ export {
   supportsCanvasAgentAdd,
   type AgentBucketRow,
   type AgentLibraryEntryLite,
-} from "./agentCanvasBucket.js";
+} from "./AgentCanvasBucket.js";
 export {
   CanvasAgentUiProvider,
   useCanvasAgentUi,

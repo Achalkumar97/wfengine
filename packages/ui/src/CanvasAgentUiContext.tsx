@@ -3,7 +3,7 @@ import {
   useContext,
   type ReactNode,
 } from "react";
-import type { AgentLibraryEntryLite } from "./agentCanvasBucket.js";
+import type { AgentLibraryEntryLite } from "./AgentCanvasBucket.js";
 
 export interface CanvasAgentUiValue {
   libraryEntries: readonly AgentLibraryEntryLite[];

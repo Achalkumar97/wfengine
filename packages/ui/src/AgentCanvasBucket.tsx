@@ -7,8 +7,64 @@ import {
   type ReactElement,
   type SyntheticEvent,
 } from "react";
-import type { AgentBucketRow } from "./agentCanvasBucket.js";
 import { cn } from "./cn.js";
+
+export interface AgentBucketRow {
+  name: string;
+  model: string;
+  systemPrompt: string;
+  source: "inline" | "library";
+}
+
+export interface AgentLibraryEntryLite {
+  id: string;
+  name: string;
+  model?: string;
+  systemPrompt?: string;
+}
+
+export function deriveAgentBucketRows(
+  wfType: string,
+  config: unknown,
+  libraryEntries: readonly AgentLibraryEntryLite[],
+): readonly AgentBucketRow[] {
+  if (!config || typeof config !== "object") return [];
+  const cfg = config as { agents?: unknown };
+  if (!cfg.agents || typeof cfg.agents !== "object") return [];
+  const agents = cfg.agents as unknown[];
+  if (!Array.isArray(agents)) return [];
+  return agents
+    .filter((a): a is AgentBucketRow =>
+      a !== null &&
+      typeof a === "object" &&
+      "name" in a &&
+      typeof a.name === "string" &&
+      "model" in a &&
+      typeof a.model === "string" &&
+      "systemPrompt" in a &&
+      typeof a.systemPrompt === "string" &&
+      "source" in a &&
+      (a.source === "inline" || a.source === "library"),
+    )
+    .map((a) => ({
+      name: a.name,
+      model: a.model,
+      systemPrompt: a.systemPrompt,
+      source: a.source,
+    }));
+}
+
+export function isAgentBucketNodeType(type: string): boolean {
+  return (
+    type === "autogen.multi-agent" ||
+    type === "autogen.single-agent" ||
+    type === "llm.openai.chat"
+  );
+}
+
+export function supportsCanvasAgentAdd(type: string): boolean {
+  return type === "autogen.multi-agent";
+}
 
 const COLLAPSE_AFTER = 4;
 const PREVIEW_COUNT = 3;
