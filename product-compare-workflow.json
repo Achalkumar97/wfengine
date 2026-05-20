@@ -1,0 +1,133 @@
+{
+  "id": "product-compare-email-slack",
+  "version": 1,
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "marketplace-search",
+      "type": "http.request",
+      "config": {
+        "url": "https://api.tavily.com/search",
+        "method": "POST",
+        "apiKey": "PASTE_TAVILY_API_KEY",
+        "body": {
+          "query": "best budget products Amazon Flipkart India reviews features comparison",
+          "search_depth": "basic",
+          "include_answer": true,
+          "max_results": 10
+        },
+        "timeoutMs": 45000,
+        "maxBodyBytes": 5000000
+      }
+    },
+    {
+      "id": "product-team",
+      "type": "autogen.multi-agent",
+      "config": {
+        "teamName": "Product comparison team",
+        "model": "qwen2.5:7b",
+        "temperature": 0.2,
+        "timeoutMs": 600000,
+        "maxTurns": 5,
+        "runtime": "orchestrated_openai",
+        "multiAgentToolBinding": "pipeline_last_turn_tools_required",
+        "requiredUpstreamFields": [
+          "product",
+          "budgetInr"
+        ],
+        "taskInstructions": "Compare products dynamically. The user provides product and budgetInr in initial data. Compare Amazon and Flipkart options where evidence is available. Do not invent exact prices, ratings, or links. Final executor must send a polished email and Slack summary.",
+        "tools": [
+          {
+            "kind": "workflow_node",
+            "nodeId": "send-email",
+            "displayName": "send_email_report",
+            "description": "Send a polished report email. Arguments: subject, text, html, to."
+          },
+          {
+            "kind": "workflow_node",
+            "nodeId": "send-slack",
+            "displayName": "send_slack_summary",
+            "description": "Send Slack summary. Arguments: text."
+          }
+        ],
+        "agents": [
+          {
+            "name": "researcher",
+            "role": "Marketplace research",
+            "systemPrompt": "Read initial data fields product, budgetInr, region, and optional notes. Find candidates for that product under the given budget. Use upstream Tavily data if relevant; otherwise clearly say web evidence is limited. Focus on Amazon and Flipkart India. Output 5-8 candidates with source/evidence notes."
+          },
+          {
+            "name": "comparator",
+            "role": "Feature comparison",
+            "systemPrompt": "You will receive candidate information from the researcher in the conversation transcript. Compare those candidates by value for money, key features, durability, brand trust, user fit, and risks. Stay within budgetInr. Pick top 3. Do not ask for candidates - use what the researcher provided. Do not invent ratings or live prices."
+          },
+          {
+            "name": "email_writer",
+            "role": "Email report writer",
+            "systemPrompt": "You will receive product, budget, comparison results, and recommendations from the researcher and comparator in the conversation transcript. Write a professional, well-organized email using that data. Include greeting, product and budget summary, top recommendation, comparison table in plain text, alternatives, caveats, and final recommendation. Do not ask for details - use what the previous agents provided."
+          },
+          {
+            "name": "slack_writer",
+            "role": "Slack summary writer",
+            "systemPrompt": "You will receive product, budget, best pick, alternatives, and comparison data from the researcher, comparator, and email_writer in the conversation transcript. Write a concise Slack message using that data. Include product, budget, best pick, two alternatives, and one caution. Use clear bullets. Do not ask for details - use what the previous agents provided."
+          },
+          {
+            "name": "action_executor",
+            "role": "Notification sender",
+            "systemPrompt": "Call tools only. First call send_email_report with subject, text, html, and to. Use to from initial data if present; if not present, fail with error. Then call send_slack_summary with text. Do not add extra commentary."
+          }
+        ]
+      }
+    },
+    {
+      "id": "send-email",
+      "type": "email.send",
+      "config": {
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "secure": false,
+        "authUser": "you@example.com",
+        "authPass": "PASTE_GMAIL_APP_PASSWORD",
+        "from": "you@example.com",
+        "to": "client@example.com",
+        "subject": "Product comparison report",
+        "text": ".",
+        "wfengineToolOnly": true
+      }
+    },
+    {
+      "id": "send-slack",
+      "type": "slack.send",
+      "config": {
+        "token": "6189315395-11000809340915-l9wprPtHVVyLL71KMUDfVvDP",
+        "channel": "webhook_test",
+        "interpolateFromInput": true,
+        "threadTs": "",
+        "mrkdwn": true,
+        "text": "{{text}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "start",
+      "target": "marketplace-search"
+    },
+    {
+      "source": "marketplace-search",
+      "target": "product-team"
+    },
+    {
+      "source": "product-team",
+      "target": "send-email"
+    },
+    {
+      "source": "send-email",
+      "target": "send-slack"
+    }
+  ]
+}
