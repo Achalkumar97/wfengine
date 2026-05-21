@@ -605,12 +605,13 @@ export async function runOpenAiToolLoop(opts: {
         if (ref?.kind === "workflow_node") {
           // Required fields keyed by canonical workflow node type (wfType), plus
           // backward-compatible legacy hyphenated names.
-          // Note: 'to' is optional for email.send since it can use config value as fallback
+          // email.send validates after merging node config, upstream input, and
+          // tool args, so the loop must not reject valid config/html-only sends.
           const requiredFields: Record<string, string[]> = {
-            "email.send": ["subject", "text"],
+            "email.send": [],
             "slack.send": ["text"],
             // legacy keys still supported
-            "send-email": ["subject", "text"],
+            "send-email": [],
             "send-slack": ["text"],
           };
 

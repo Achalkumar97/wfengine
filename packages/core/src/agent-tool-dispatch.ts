@@ -1,5 +1,6 @@
 import {
   collectAncestorIds,
+  interpolateTemplateValue,
   type WorkflowDefinition,
   type WorkflowEdge,
 } from "@wfengine/shared";
@@ -29,6 +30,8 @@ const PROTECTED_FIELDS = new Set([
   "port",
   "authUser",
   "authPass",
+  "resendApiKey",
+  "deliveryMode",
   "secure",
   // Slack node - authentication
   "token",
@@ -151,11 +154,23 @@ export function createAgentToolDispatch(
         );
       }
       
-      const inputData =
+      const interpolationData =
         safeArgs !== undefined &&
         typeof safeArgs === "object" &&
         !Array.isArray(safeArgs)
           ? { ...baseInput, ...safeArgs }
+          : baseInput;
+      const interpolatedArgs =
+        safeArgs !== undefined &&
+        typeof safeArgs === "object" &&
+        !Array.isArray(safeArgs)
+          ? interpolateTemplateValue(safeArgs, interpolationData)
+          : safeArgs;
+      const inputData =
+        interpolatedArgs !== undefined &&
+        typeof interpolatedArgs === "object" &&
+        !Array.isArray(interpolatedArgs)
+          ? { ...baseInput, ...interpolatedArgs }
           : baseInput;
 
       const def = params.registry.require(node.type, node.id);

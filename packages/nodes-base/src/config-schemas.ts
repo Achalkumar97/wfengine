@@ -59,12 +59,15 @@ export const EmailAttachmentSchema = z.object({
 });
 
 export const EmailSendConfigSchema = z.object({
-  host: z.string().min(1),
-  port: z.coerce.number().int().positive(),
+  /** Delivery backend. Missing means SMTP for old workflow JSON compatibility. */
+  deliveryMode: z.enum(["smtp", "resend"]).optional().default("smtp"),
+  host: optionalNonEmptyString(),
+  port: z.coerce.number().int().positive().optional().default(587),
   secure: z.boolean().optional().default(false),
-  authUser: z.string().min(1),
-  authPass: z.string(),
-  from: z.string().min(1),
+  authUser: optionalNonEmptyString(),
+  authPass: z.string().optional(),
+  resendApiKey: z.string().optional().describe("secret:resend_api_key"),
+  from: optionalNonEmptyString(),
   to: z.union([z.string().min(1), z.array(z.string().min(1))]),
   subject: z.string().min(1),
   text: z.string().optional(),
@@ -84,10 +87,14 @@ export const EmailSendConfigSchema = z.object({
 });
 
 export const EmailSendOutputSchema = z.object({
+  success: z.boolean().optional(),
+  deliveryMode: z.enum(["smtp", "resend"]).optional(),
   messageId: z.string().optional(),
   accepted: z.array(z.string()),
   rejected: z.array(z.string()),
   response: z.string().optional(),
+  durationMs: z.number().optional(),
+  error: z.string().optional(),
 });
 
 export const EmailReadConfigSchema = z.object({

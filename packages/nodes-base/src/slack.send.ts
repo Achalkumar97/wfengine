@@ -6,7 +6,7 @@ import {
   SlackSendOutputSchema,
 } from "./config-schemas.js";
 import { redactSecretsDeep } from "./redact-secrets.js";
-import { interpolateTemplate } from "./template-interpolate.js";
+import { interpolateTemplateTwice } from "./template-interpolate.js";
 
 export {
   SlackSendConfigSchema,
@@ -59,7 +59,7 @@ export const slackSendNode: NodeDefinition = {
     if (trimmed.length === 0) {
       text = formatUpstreamPayloadForSlack(safeIn);
     } else if (c.interpolateFromInput) {
-      text = interpolateTemplate(template, safeIn);
+      text = interpolateTemplateTwice(template, safeIn);
     } else {
       text = template;
     }

@@ -31,3 +31,8 @@ export {
 } from "./workflow-dag.js";
 
 export { redactSecretsDeep } from "./redact-secrets.js";
+export {
+  interpolateTemplate,
+  interpolateTemplateTwice,
+  interpolateTemplateValue,
+} from "./template-interpolate.js";
