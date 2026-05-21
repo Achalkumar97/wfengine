@@ -3,7 +3,7 @@
  * payloads (defense in depth; not a full DLP system).
  */
 const SENSITIVE_KEY_RE =
-  /^(password|pass|secret|token|api[_-]?key|auth|authorization|bearer|client_secret|github[_-]?token|openai[_-]?api[_-]?key|temp_clone_token|connectionString|connection_string|authPass|authUser)$/i;
+  /^(password|pass|secret|token|api[_-]?key|auth|authorization|bearer|client_secret|github[_-]?token|openai[_-]?api[_-]?key|resend[_-]?api[_-]?key|temp_clone_token|connectionString|connection_string|authPass|authUser)$/i;
 
 const TOKEN_VALUE_RE =
   /^(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]+|xox[bap]-[0-9A-Za-z-]+|sk-[A-Za-z0-9]{20,})/;

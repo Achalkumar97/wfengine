@@ -249,6 +249,46 @@ describe("WorkflowEngine", () => {
     });
   });
 
+  it("interpolates workflow_node tool arguments before target execution", async () => {
+    const invokesTool: NodeDefinition = {
+      type: "invokes-interpolated-tool",
+      label: "Invokes interpolated tool",
+      execute: async ({ agentToolDispatch }) => {
+        if (!agentToolDispatch) throw new Error("expected agentToolDispatch");
+        return agentToolDispatch.executeWorkflowNode("notify", {
+          text: "Top pick: [Product Name] under {{budget.inr}}",
+        });
+      },
+    };
+    const notifyTarget: NodeDefinition = {
+      type: "notify-target-interpolated",
+      label: "Notify target interpolated",
+      execute: async ({ inputData }) => ({ text: inputData.text }),
+    };
+
+    const engine = new WorkflowEngine();
+    engine.registerNode(invokesTool);
+    engine.registerNode(notifyTarget);
+
+    const wf: WorkflowDefinition = {
+      id: "wf-tool-interpolate",
+      nodes: [
+        { id: "agent", type: "invokes-interpolated-tool", config: {} },
+        { id: "notify", type: "notify-target-interpolated", config: {} },
+      ],
+      edges: [{ source: "agent", target: "notify" }],
+    };
+
+    const result = await engine.execute(wf, {
+      productName: "RunnerBuds",
+      budget: { inr: 2000 },
+    });
+
+    expect(result.outputs["notify"]).toMatchObject({
+      text: "Top pick: RunnerBuds under 2000",
+    });
+  });
+
   it("fails with explicit error when wfengineToolOnly node was not agent-invoked", async () => {
     const engine = new WorkflowEngine();
     engine.registerNode(noop);

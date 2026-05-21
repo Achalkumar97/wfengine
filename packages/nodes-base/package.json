@@ -23,9 +23,12 @@
       "import": "./dist/utils/validation.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
+    "test": "vitest run",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -36,12 +39,13 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.16",
     "pg": "^8.13.1",
+    "resend": "^6.12.3",
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/nodemailer": "^6.4.17",
     "@types/node": "^22.10.5",
     "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^6.4.17",
     "@types/pg": "^8.11.10",
     "typescript": "^5.7.2"
   }

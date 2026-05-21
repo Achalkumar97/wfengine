@@ -12,6 +12,15 @@ const normalizeOptionalString = (v?: string): string | undefined => {
   const trimmed = v.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 };
+
+const stableConfigString = (value: Record<string, unknown>): string =>
+  JSON.stringify(
+    Object.fromEntries(
+      Object.entries(value)
+        .filter(([, v]) => v !== undefined)
+        .sort(([a], [b]) => a.localeCompare(b)),
+    ),
+  );
 import {
   CronTriggerConfigSchema,
   EmailReadConfigSchema,
@@ -392,7 +401,9 @@ function useDebouncedValidConfig<T extends FieldValues>(
       }
     }
 
-    update(nid, strip ? stripOpenAiEnvFromConfig(merged) : merged);
+    const next = strip ? stripOpenAiEnvFromConfig(merged) : merged;
+    if (stableConfigString(next) === stableConfigString(base)) return;
+    update(nid, next);
   }, [schema]); // schema is a module-level constant — always stable
 
   // Debounced save triggered by every value change.
@@ -685,10 +696,14 @@ function EmailSendPanel(props: InspectorRenderProps): ReactElement {
   const cfg = selectedNode.data.config ?? {};
   const form = useForm({
     resolver: zodResolver(EmailSendConfigSchema),
-    defaultValues: EmailSendConfigSchema.partial().parse(cfg),
+    defaultValues: {
+      deliveryMode: "smtp",
+      ...EmailSendConfigSchema.partial().parse(cfg),
+    },
   });
 
   const vals = useWatch({ control: form.control });
+  const deliveryMode = vals?.deliveryMode === "resend" ? "resend" : "smtp";
   useDebouncedValidConfig(
     vals ?? {},
     EmailSendConfigSchema,
@@ -698,55 +713,136 @@ function EmailSendPanel(props: InspectorRenderProps): ReactElement {
   );
 
   useEffect(() => {
-    form.reset(EmailSendConfigSchema.partial().parse(cfg));
-  }, [selectedNode.id, cfg, form]);
+    form.reset({
+      deliveryMode: "smtp",
+      ...EmailSendConfigSchema.partial().parse(selectedNode.data.config ?? {}),
+    });
+  }, [selectedNode.id, form]);
+
+  const renderTextInput = (
+    key:
+      | "host"
+      | "authUser"
+      | "authPass"
+      | "resendApiKey"
+      | "from"
+      | "to"
+      | "subject"
+      | "replyTo"
+      | "attachInputContentAsFilename",
+    label: string,
+    options: { secret?: boolean; placeholder?: string } = {},
+  ) => (
+    <div className={fieldGroup()}>
+      <label className={fieldLabel()}>{label}</label>
+      {options.secret ? (
+        <SecretInput {...form.register(key)} placeholder={options.placeholder} />
+      ) : (
+        <input
+          {...form.register(key)}
+          placeholder={options.placeholder}
+          className={fieldInput()}
+        />
+      )}
+    </div>
+  );
 
   return (
     <div className="mt-2 space-y-3">
-      {(
-        [
-          ["host", "SMTP host"],
-          ["port", "Port"],
-          ["authUser", "Username"],
-          ["authPass", "Password"],
-          ["from", "From"],
-          ["to", "To (string or use JSON array in raw)"],
-          ["subject", "Subject"],
-          ["text", "Text body"],
-          ["html", "HTML body"],
-          ["replyTo", "Reply-To"],
-          [
-            "attachInputContentAsFilename",
-            "Attach merged `content` as file (filename)",
-          ],
-        ] as const
-      ).map(([key, lab]) => (
-        <div key={key} className={fieldGroup()}>
-          <label className={fieldLabel()}>{lab}</label>
-          {key === "text" || key === "html" ? (
-            <textarea
-              {...form.register(key)}
-              rows={3}
-              className={fieldInput("min-h-[72px] font-mono text-xs")}
-            />
-          ) : key === "port" ? (
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>Delivery mode</label>
+        <div className="grid grid-cols-2 gap-1 rounded-xl border border-white/[0.08] bg-[#16161f] p-1">
+          {(["smtp", "resend"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() =>
+                form.setValue("deliveryMode", mode, {
+                  shouldDirty: true,
+                  shouldTouch: true,
+                  shouldValidate: true,
+                })
+              }
+              className={cn(
+                "rounded-lg px-2 py-1.5 text-xs font-semibold transition",
+                deliveryMode === mode
+                  ? "bg-[#252530] text-zinc-100 ring-1 ring-white/[0.06]"
+                  : "text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-300",
+              )}
+            >
+              {mode === "smtp" ? "SMTP" : "Resend"}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1 text-[10px] leading-relaxed text-zinc-500">
+          SMTP keeps the existing Nodemailer transport. Resend uses HTTPS and is
+          recommended for Railway deployments.
+        </p>
+      </div>
+
+      {deliveryMode === "smtp" ? (
+        <div className="space-y-3 rounded-lg border border-white/[0.06] bg-[#101018]/45 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+            SMTP
+          </p>
+          {renderTextInput("host", "SMTP host", { placeholder: "smtp.gmail.com" })}
+          <div className={fieldGroup()}>
+            <label className={fieldLabel()}>Port</label>
             <input
               type="number"
               {...form.register("port")}
+              placeholder="587"
               className={fieldInput()}
             />
-          ) : key === "authPass" ? (
-            <SecretInput {...form.register(key)} />
-          ) : (
-            <input {...form.register(key)} className={fieldInput()} />
-          )}
+          </div>
+          {renderTextInput("authUser", "Username", { placeholder: "you@example.com" })}
+          {renderTextInput("authPass", "Password", { secret: true })}
+          <label className={fieldLabel("flex items-center gap-2 normal-case tracking-normal text-zinc-300")}>
+            <input type="checkbox" {...form.register("secure")} /> Secure (TLS)
+          </label>
         </div>
-      ))}
+      ) : (
+        <div className="space-y-3 rounded-lg border border-white/[0.06] bg-[#101018]/45 p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+            Resend
+          </p>
+          {renderTextInput("resendApiKey", "Resend API key", {
+            secret: true,
+            placeholder: "Uses RESEND_API_KEY when empty",
+          })}
+          <p className="text-[10px] leading-relaxed text-zinc-500">
+            Use a verified Resend sender/domain. Railway can provide the API key
+            with <code className="text-zinc-400">RESEND_API_KEY</code>.
+          </p>
+        </div>
+      )}
+
+      {renderTextInput("from", "From", { placeholder: "verified@example.com" })}
+      {renderTextInput("to", "To (string or use JSON array in raw)", {
+        placeholder: "recipient@example.com",
+      })}
+      {renderTextInput("subject", "Subject")}
       <div className={fieldGroup()}>
-        <label className={fieldLabel("flex items-center gap-2 normal-case tracking-normal text-zinc-300")}>
-          <input type="checkbox" {...form.register("secure")} /> Secure (TLS)
-        </label>
+        <label className={fieldLabel()}>Text body</label>
+        <textarea
+          {...form.register("text")}
+          rows={3}
+          className={fieldInput("min-h-[72px] font-mono text-xs")}
+        />
       </div>
+      <div className={fieldGroup()}>
+        <label className={fieldLabel()}>HTML body</label>
+        <textarea
+          {...form.register("html")}
+          rows={3}
+          className={fieldInput("min-h-[72px] font-mono text-xs")}
+        />
+      </div>
+      {renderTextInput("replyTo", "Reply-To")}
+      {renderTextInput(
+        "attachInputContentAsFilename",
+        "Attach merged `content` as file (filename)",
+      )}
       <div className={fieldGroup()}>
         <label className={fieldLabel("flex items-center gap-2 normal-case tracking-normal text-zinc-300")}>
           <input

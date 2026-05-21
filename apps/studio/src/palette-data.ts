@@ -34,7 +34,7 @@ export const STUDIO_PALETTE: PaletteNodeMeta[] = [
     type: "email.send",
     label: "Send Email",
     category: "Actions",
-    description: "SMTP send via Nodemailer.",
+    description: "Send via SMTP or Resend.",
     icon: "mail",
   },
   {
