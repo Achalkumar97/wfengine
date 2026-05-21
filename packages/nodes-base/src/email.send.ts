@@ -91,32 +91,56 @@ function mergeEmailPayload(
 ): Omit<z.infer<typeof EmailSendConfigSchema>, "wfengineToolOnly"> {
   const { wfengineToolOnly: _w, ...base } = c;
 
+  const coalesceString = (...values: unknown[]) => {
+    for (const value of values) {
+      if (typeof value === "string" && value.trim().length > 0) {
+        return value.trim();
+      }
+    }
+    return undefined;
+  };
+
   const text =
-    typeof inputData.text === "string"
-      ? inputData.text
-      : typeof inputData.output === "string" &&
-          inputData.output.trim().length > 0
-        ? inputData.output
-        : base.text;
+    coalesceString(inputData.text, inputData.message, inputData.body, inputData.content) ??
+    (typeof inputData.output === "string" && inputData.output.trim().length > 0
+      ? inputData.output
+      : base.text);
 
   const html =
-    typeof inputData.html === "string" ? inputData.html : base.html;
+    coalesceString(inputData.html, inputData.htmlBody) ?? base.html;
 
   const subject =
-    typeof inputData.subject === "string" ? inputData.subject : base.subject;
+    coalesceString(
+      inputData.subject,
+      inputData.title,
+      inputData.topic,
+      inputData.emailSubject,
+    ) ?? base.subject;
 
   const replyTo =
-    typeof inputData.replyTo === "string" ? inputData.replyTo : base.replyTo;
+    coalesceString(inputData.replyTo, inputData.reply_to) ?? base.replyTo;
+
+  const emailToCandidate =
+    inputData.to ??
+    inputData.recipients ??
+    inputData.recipient ??
+    inputData.emailRecipients ??
+    inputData.emailTo ??
+    inputData.addresses ??
+    inputData.email ??
+    inputData.recipientAddress ??
+    inputData.toAddress ??
+    inputData.toAddresses;
 
   let to: z.infer<typeof EmailSendConfigSchema>["to"] = base.to;
-  if (typeof inputData.to === "string" && inputData.to.trim().length > 0) {
-    to = inputData.to;
+  if (typeof emailToCandidate === "string" && emailToCandidate.trim().length > 0) {
+    to = emailToCandidate.trim();
   } else if (
-    Array.isArray(inputData.to) &&
-    inputData.to.length > 0 &&
-    inputData.to.every((x) => typeof x === "string")
+    Array.isArray(emailToCandidate) &&
+    emailToCandidate.length > 0 &&
+    emailToCandidate.every((x) => typeof x === "string" && x.trim().length > 0)
   ) {
-    to = inputData.to as string[];
+    to = emailToCandidate.map((x) => x.trim());
   }
 
   let attachments = base.attachments;

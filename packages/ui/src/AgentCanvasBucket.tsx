@@ -34,24 +34,27 @@ export function deriveAgentBucketRows(
   const agents = cfg.agents as unknown[];
   if (!Array.isArray(agents)) return [];
   return agents
-    .filter((a): a is AgentBucketRow =>
+    .filter((a): a is Record<string, unknown> =>
       a !== null &&
       typeof a === "object" &&
       "name" in a &&
-      typeof a.name === "string" &&
-      "model" in a &&
-      typeof a.model === "string" &&
+      typeof (a as any).name === "string" &&
       "systemPrompt" in a &&
-      typeof a.systemPrompt === "string" &&
-      "source" in a &&
-      (a.source === "inline" || a.source === "library"),
+      typeof (a as any).systemPrompt === "string"
     )
-    .map((a) => ({
-      name: a.name,
-      model: a.model,
-      systemPrompt: a.systemPrompt,
-      source: a.source,
-    }));
+    .map((a) => {
+      const rec = a as Record<string, unknown>;
+      const src = rec.source;
+      const source: "inline" | "library" = (src === "inline" || src === "library") ? src : "inline";
+      const mod = rec.model;
+      const model = typeof mod === "string" ? mod : "";
+      return {
+        name: rec.name as string,
+        model,
+        systemPrompt: rec.systemPrompt as string,
+        source,
+      };
+    });
 }
 
 export function isAgentBucketNodeType(type: string): boolean {

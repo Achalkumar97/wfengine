@@ -114,20 +114,25 @@ export class WorkflowEngine {
 
       emitNodeStart(notify, nodeId, node.type);
 
+      const priorOutput = outputs.get(nodeId);
+      if (
+        priorOutput !== undefined &&
+        !isLegacyLinearAgentInvokeOnlyPlaceholder(priorOutput)
+      ) {
+        ctx.logger.info(
+          "engine: node already executed via workflow_node tool; skipping linear duplicate",
+          { nodeId, nodeType: node.type },
+        );
+        emitNodeComplete(notify, {
+          nodeId,
+          nodeType: node.type,
+          ok: true,
+        });
+        continue;
+      }
+
       const rawCfg = (node.config ?? {}) as Record<string, unknown>;
       if (rawCfg.wfengineToolOnly === true) {
-        const prior = outputs.get(nodeId);
-        if (
-          prior !== undefined &&
-          !isLegacyLinearAgentInvokeOnlyPlaceholder(prior)
-        ) {
-          emitNodeComplete(notify, {
-            nodeId,
-            nodeType: node.type,
-            ok: true,
-          });
-          continue;
-        }
         const msg = buildAgentInvokeOnlyNotRunMessage(nodeId, node.type);
         errors[nodeId] = msg;
         outputs.set(nodeId, createErrorOutput(nodeId, msg));

@@ -203,6 +203,52 @@ describe("WorkflowEngine", () => {
     );
   });
 
+  it("does not re-run a downstream node already invoked by an agent tool", async () => {
+    let targetCalls = 0;
+    const invokesTool: NodeDefinition = {
+      type: "invokes-tool-once",
+      label: "Invokes tool once",
+      execute: async ({ agentToolDispatch }) => {
+        if (!agentToolDispatch) throw new Error("expected agentToolDispatch");
+        const out = await agentToolDispatch.executeWorkflowNode("notify", {
+          text: "hello",
+        });
+        return { agent: true, toolOut: out };
+      },
+    };
+    const notifyTarget: NodeDefinition = {
+      type: "notify-target",
+      label: "Notify target",
+      execute: async ({ inputData }) => {
+        targetCalls++;
+        return { sent: true, text: inputData.text, targetCalls };
+      },
+    };
+
+    const engine = new WorkflowEngine();
+    engine.registerNode(invokesTool);
+    engine.registerNode(notifyTarget);
+
+    const wf: WorkflowDefinition = {
+      id: "wf-tool-no-duplicate",
+      nodes: [
+        { id: "agent", type: "invokes-tool-once", config: {} },
+        { id: "notify", type: "notify-target", config: {} },
+      ],
+      edges: [{ source: "agent", target: "notify" }],
+    };
+
+    const result = await engine.execute(wf, {});
+
+    expect(result.status).toBe("completed");
+    expect(targetCalls).toBe(1);
+    expect(result.outputs["notify"]).toMatchObject({
+      sent: true,
+      text: "hello",
+      targetCalls: 1,
+    });
+  });
+
   it("fails with explicit error when wfengineToolOnly node was not agent-invoked", async () => {
     const engine = new WorkflowEngine();
     engine.registerNode(noop);
