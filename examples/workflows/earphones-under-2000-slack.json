@@ -1,0 +1,146 @@
+{
+  "id": "earphones-under-2000-slack",
+  "version": 4,
+  "_readme": [
+    "=== Gym earphones — autogen.multi-agent + workflow tools ===",
+    "Five research/analysis agents produce one CSV. One final Action Executor agent",
+    "calls workflow_node tools only: (1) write_csv_report → (2) send_slack_message.",
+    "",
+    "=== Tavily web search (node web-search-tavily) ===",
+    "Replace PASTE_TAVILY_API_KEY in that node’s config body with your key.",
+    "",
+    "=== Required initial payload ===",
+    "{ \"runDate\": \"YYYY-MM-DD\", \"budgetInr\": 2000, \"region\": \"IN\" }",
+    "",
+    "=== Slack setup ===",
+    "Set your Slack bot token (xoxb-...) in the slack node config.",
+    "Make sure the Slack app has chat:write scopes and is added to the channel."
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "type": "noop",
+      "config": {}
+    },
+    {
+      "id": "web-search-tavily",
+      "type": "http.request",
+      "config": {
+        "url": "https://api.tavily.com/search",
+        "method": "POST",
+        "timeoutMs": 45000,
+        "body": {
+          "api_key": "PASTE_TAVILY_API_KEY",
+          "query": "best wireless earphones India gym workout sweat resistant budget 2000 INR",
+          "search_depth": "basic",
+          "include_answer": true,
+          "max_results": 10
+        }
+      }
+    },
+    {
+      "id": "gym-autogen-team",
+      "type": "autogen.multi-agent",
+      "config": {
+        "teamName": "Gym earphones — research + action executor",
+        "model": "gpt-4o-mini",
+        "temperature": 0.15,
+        "timeoutMs": 600000,
+        "maxTurns": 6,
+        "runtime": "orchestrated_openai",
+        "requiredUpstreamFields": ["runDate"],
+        "taskInstructions": "PIPELINE (strict):\n- Agents 1–5 (researcher → excel_writer): analysis only. They MUST NOT call any workflow tools.\n- Agent 6 (action_executor) ONLY: call tools in order — first write_csv_report, then send_slack_message.\n\nUPSTREAM WEB CONTEXT:\n- The merged workflow JSON may include `body` (and `status`) from node web-search-tavily (Tavily API response). Ground factual claims in that `body` when present.\n\nGLOBAL CONTENT RULES:\n- Budget ≤ ₹2,000 INR per unit (India). Gym use case (fit, sweat resistance, battery).\n- Do not invent ratings, review counts, live prices, or stock.\n- Never fabricate product URLs.",
+        "tools": [
+          {
+            "kind": "workflow_node",
+            "nodeId": "tool-write-csv",
+            "displayName": "write_csv_report",
+            "description": "STEP 1 (call before slack). Writes UTF-8 CSV to disk. Arguments object MUST include: csvContent (string, exact full CSV from excel_writer including header row, no markdown code fences), runDate (string YYYY-MM-DD matching workflow initialData.runDate)."
+          },
+          {
+            "kind": "workflow_node",
+            "nodeId": "tool-send-slack",
+            "displayName": "send_slack_message",
+            "description": "STEP 2 (only after write_csv_report succeeds). Sends Slack message. Arguments: text (string, summarizing top 5 earphones with details and mentioning that the CSV was saved locally). The text string will be interpolated in the slack config."
+          }
+        ],
+        "agents": [
+          {
+            "name": "researcher",
+            "role": "Desk research",
+            "model": "gpt-4o-mini",
+            "source": "inline",
+            "systemPrompt": "You are the Researcher (**no workflow tools**).\n\nINPUT: The merged Context JSON may include `body` from an upstream Tavily web search. Prefer candidate models that are **supported by those snippets or titles**. If `body` is missing, fall back to general knowledge.\n\nTask: List candidate models (brand + model) for workouts under ₹2,000 in India.\n\nRules:\n- 6–10 bullets max.\n- Each bullet: Brand, model, short gym note.\n- End with: \"Limitations: verify prices, availability, and links live.\""
+          },
+          {
+            "name": "evaluator",
+            "role": "Gym suitability filter",
+            "model": "gpt-4o-mini",
+            "source": "inline",
+            "systemPrompt": "You are the Evaluator (**no tools**).\n\nReduce to ≤5 models best for gym use under ₹2.0k. Emphasize IPX/fit/battery.\n\nIf zero models qualify, output NO_QUALIFYING_PRODUCTS.\nOtherwise 2–4 sentences per kept model."
+          },
+          {
+            "name": "collector",
+            "role": "Links & link integrity",
+            "model": "gpt-4o-mini",
+            "source": "inline",
+            "systemPrompt": "You are the Data Collector (**no tools**).\n\nFor each Evaluator-kept model (max 5), output one block:\n---\nProduct: …\nPrice band (INR): …\nKey specs (one line): …\nLink line: …\nLink status: VERIFIED_PATTERN | SUGGESTED_SEARCH | OFFICIAL_ONLY | UNAVAILABLE\nRating: NR\n---"
+          },
+          {
+            "name": "validator",
+            "role": "Quality gate",
+            "model": "gpt-4o-mini",
+            "source": "inline",
+            "systemPrompt": "You are the Validator (**no tools**).\n\nSECTION A — one line: VERDICT: PASS | FALLBACK_EMPTY\nSECTION B — ISSUES (bullets)\nSECTION C — one line: CSV_ROWS: N"
+          },
+          {
+            "name": "excel_writer",
+            "role": "CSV export only",
+            "model": "gpt-4o-mini",
+            "source": "inline",
+            "systemPrompt": "You are Excel Writer (**no tools**). Output ONLY one CSV document — no markdown fences, no commentary.\n\nHeader row MUST be exactly:\n\"Product Name\",\"Price INR Band\",\"Key Features\",\"Link or Search Query\",\"Link Status\",\"Rating\",\"Why Gym Suitable\"\n\nRFC 4180 quoting."
+          },
+          {
+            "name": "action_executor",
+            "role": "Tool calls only",
+            "model": "gpt-4o-mini",
+            "source": "inline",
+            "systemPrompt": "You are the Action Executor — **your only job is to call two workflow tools in order**.\n\nPREREQUISITE: Find the last message from **excel_writer** in this thread. That entire message body is the CSV (copy it exactly).\n\nSTEP A — Call **write_csv_report** once with JSON arguments:\n{\n  \"csvContent\": \"<paste EXACT excel_writer CSV, unchanged>\",\n  \"runDate\": \"<exact runDate string from the workflow Context>\"\n}\nWait until the tool returns success.\n\nSTEP B — Call **send_slack_message** once with JSON arguments:\n{\n  \"text\": \"*Top 5 Gym Earphones under 2000 INR*\\n\\n<Summarize the 5 products with key details (name, price, why gym suitable, link)>\\n\\n_A full CSV report (gym-earphones-<runDate>.csv) has been saved locally._\"\n}\n\nIf either tool errors, report the error JSON briefly and stop."
+          }
+        ]
+      }
+    },
+    {
+      "id": "tool-write-csv",
+      "type": "file.write",
+      "config": {
+        "wfengineToolOnly": true,
+        "path": "reports/gym-earphones-{{runDate}}.csv",
+        "interpolatePathFromInput": true,
+        "content": "{{csvContent}}",
+        "interpolateContentFromInput": true,
+        "encoding": "utf8",
+        "append": false,
+        "createDirs": true
+      }
+    },
+    {
+      "id": "tool-send-slack",
+      "type": "slack.send",
+      "config": {
+        "wfengineToolOnly": true,
+        "token": "REPLACE_WITH_SLACK_BOT_XOXB_TOKEN",
+        "channel": "REPLACE_WITH_CHANNEL_ID_OR_NAME",
+        "text": "{{text}}",
+        "interpolateFromInput": true,
+        "mrkdwn": true
+      }
+    }
+  ],
+  "edges": [
+    { "source": "start", "target": "web-search-tavily" },
+    { "source": "web-search-tavily", "target": "gym-autogen-team" },
+    { "source": "gym-autogen-team", "target": "tool-write-csv" },
+    { "source": "tool-write-csv", "target": "tool-send-slack" }
+  ]
+}

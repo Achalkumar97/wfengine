@@ -12,6 +12,7 @@ import {
   Bot,
   ClipboardPaste,
   CloudUpload,
+  Command,
   FolderOpen,
   FileUp,
   HardDrive,
@@ -20,6 +21,7 @@ import {
   Redo2,
   Save,
   Square,
+  Terminal,
   X,
   Undo2,
   Upload,
@@ -165,6 +167,22 @@ export default function App(): ReactElement {
   const [serverWorkflows, setServerWorkflows] = useState<WorkflowRow[]>([]);
   const [serverBusy, setServerBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [runDrawerOpen, setRunDrawerOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [autoSavePending, setAutoSavePending] = useState(false);
+  const [runDrawerHeight, setRunDrawerHeight] = useState(() => {
+    if (typeof window === "undefined") return 400;
+    try {
+      const saved = window.localStorage.getItem("wfengine.studio.runDrawerHeight");
+      return saved ? Math.max(200, Math.min(800, Number(saved))) : 400;
+    } catch {
+      return 400;
+    }
+  });
+  const [isResizingRunDrawer, setIsResizingRunDrawer] = useState(false);
+  const autoSaveTimer = useRef<number | undefined>(undefined);
 
   const activeTab = tabs?.find((t) => t.tabId === activeTabId);
 
@@ -201,6 +219,98 @@ export default function App(): ReactElement {
       ),
     );
   }, [activeTabId, tabs]);
+
+  const scheduleAutoSave = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (autoSaveTimer.current) {
+      window.clearTimeout(autoSaveTimer.current);
+    }
+    setAutoSavePending(true);
+    autoSaveTimer.current = window.setTimeout(() => {
+      saveActiveTabSilently();
+      setAutoSavePending(false);
+      autoSaveTimer.current = undefined;
+    }, 850);
+  }, [saveActiveTabSilently]);
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimer.current) {
+        window.clearTimeout(autoSaveTimer.current);
+      }
+    };
+  }, []);
+
+  const commandInputRef = useRef<HTMLInputElement | null>(null);
+
+  const onWorkflowChange = useCallback(
+    (nodes: Node<WfNodeData>[], edges: Edge[]) => {
+      if (!activeTab) return;
+      setTabs((prev) =>
+        (prev ?? []).map((t) =>
+          t.tabId === activeTab.tabId
+            ? { ...t, nodes, edges, dirty: true }
+            : t,
+        ),
+      );
+      scheduleAutoSave();
+    },
+    [activeTab, scheduleAutoSave],
+  );
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCommandOpen(true);
+      }
+      if (e.key === "Escape") {
+        setCommandOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (commandOpen) {
+      commandInputRef.current?.focus();
+    }
+  }, [commandOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        "wfengine.studio.runDrawerHeight",
+        String(runDrawerHeight),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [runDrawerHeight]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isResizingRunDrawer) {
+        const newHeight = Math.max(200, Math.min(800, window.innerHeight - e.clientY));
+        setRunDrawerHeight(newHeight);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingRunDrawer(false);
+    };
+
+    if (isResizingRunDrawer) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+      return () => {
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      };
+    }
+  }, [isResizingRunDrawer]);
 
   const onSaveToBrowser = useCallback(() => {
     saveActiveTabSilently();
@@ -739,6 +849,88 @@ export default function App(): ReactElement {
     }
   }, [activeTab, agentLibraryDoc]);
 
+  const commandActions = useMemo(
+    () => [
+      {
+        label: "Save current tab",
+        description: "Save the active workflow to browser storage.",
+        action: () => {
+          onSaveToBrowser();
+          setCommandOpen(false);
+        },
+      },
+      {
+        label: "Export workflow",
+        description: "Download the current workflow as JSON.",
+        action: () => {
+          onExport();
+          setCommandOpen(false);
+        },
+      },
+      {
+        label: "Run workflow",
+        description: "Execute the active workflow inline with live progress.",
+        action: () => {
+          void runWorkflow();
+          setCommandOpen(false);
+        },
+      },
+      {
+        label: "Run workflow (async)",
+        description: "Start an asynchronous background run with cancel support.",
+        action: () => {
+          void runWorkflowAsync();
+          setCommandOpen(false);
+        },
+      },
+      {
+        label: "Toggle library panel",
+        description: "Open or close the tool/library sidebar.",
+        action: () => {
+          setLibraryOpen((prev) => !prev);
+          setCommandOpen(false);
+        },
+      },
+      {
+        label: "Toggle run drawer",
+        description: "Show or hide the run log drawer.",
+        action: () => {
+          setRunDrawerOpen((prev) => !prev);
+          setCommandOpen(false);
+        },
+      },
+      {
+        label: "Toggle debug panel",
+        description: "Show or hide the debug panel.",
+        action: () => {
+          setDebugOpen((prev) => !prev);
+          setCommandOpen(false);
+        },
+      },
+      {
+        label: "Import workflow",
+        description: "Open a JSON workflow file or paste contents.",
+        action: () => {
+          setImportDialogOpen(true);
+          setCommandOpen(false);
+        },
+      },
+    ],
+    [onExport, onSaveToBrowser, runWorkflow, runWorkflowAsync],
+  );
+
+  const filteredCommandActions = useMemo(
+    () => commandActions.filter((item) => {
+      const query = commandQuery.trim().toLowerCase();
+      if (!query) return true;
+      return (
+        item.label.toLowerCase().includes(query) ||
+        item.description.toLowerCase().includes(query)
+      );
+    }),
+    [commandActions, commandQuery],
+  );
+
   const runSingleNodeFromCache = useCallback(
     async (nodeId: string) => {
       const el = canvasRef.current;
@@ -990,6 +1182,7 @@ export default function App(): ReactElement {
         t.tabId === activeTab.tabId ? { ...t, [key]: value, dirty: true } : t,
       ),
     );
+    scheduleAutoSave();
   };
 
   return (
@@ -1124,11 +1317,18 @@ export default function App(): ReactElement {
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New</span>
             </button>
+            <ToolbarBtn
+              title="Command palette (Ctrl+K)"
+              onClick={() => setCommandOpen(true)}
+            >
+              <Command className="h-4 w-4" />
+              <span className="hidden lg:inline">Cmd</span>
+            </ToolbarBtn>
           </div>
         </div>
 
         {/* Right: actions */}
-        <div className="flex shrink-0 items-center gap-1.5 pl-2 pr-3">
+        <div className="flex flex-wrap shrink-0 items-center gap-1.5 pl-2 pr-3">
           <ToolbarBtn
             title="Undo"
             disabled={!hist.canUndo}
@@ -1231,6 +1431,13 @@ export default function App(): ReactElement {
             <Upload className="h-4 w-4" />
             <span className="hidden lg:inline">Import</span>
           </ToolbarBtn>
+          <ToolbarBtn
+            title="Open run log"
+            onClick={() => setRunDrawerOpen(true)}
+          >
+            <Terminal className="h-4 w-4" />
+            <span className="hidden lg:inline">Logs</span>
+          </ToolbarBtn>
 
           <span className="mx-0.5 hidden h-6 w-px bg-white/10 md:inline-block" />
 
@@ -1291,6 +1498,58 @@ export default function App(): ReactElement {
         />
       </header>
 
+      {commandOpen ? (
+        <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/35 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-3xl rounded-3xl border border-white/[0.08] bg-[#11111a] p-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/5 text-zinc-200">
+                <Command className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <label className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                  Command palette
+                </label>
+                <input
+                  ref={commandInputRef}
+                  value={commandQuery}
+                  onChange={(e) => setCommandQuery(e.target.value)}
+                  placeholder="Type a command..."
+                  className="mt-2 w-full rounded-2xl border border-white/[0.08] bg-[#14141f] px-3 py-3 text-sm text-zinc-200 outline-none ring-violet-400/20 focus:border-violet-400/50 focus:ring-2"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setCommandOpen(false)}
+                className="rounded-2xl border border-white/[0.08] bg-[#1b1b26] px-3 py-2 text-sm text-zinc-300 hover:bg-white/[0.05]"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 max-h-[50vh] overflow-auto">
+              {filteredCommandActions.length ? (
+                <div className="space-y-2">
+                  {filteredCommandActions.map((item) => (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={item.action}
+                      className="w-full rounded-2xl border border-white/[0.06] bg-[#0f0f17] px-4 py-3 text-left text-sm text-zinc-200 transition hover:border-violet-400/40 hover:bg-[#171724]"
+                    >
+                      <div className="font-semibold text-zinc-100">{item.label}</div>
+                      <div className="mt-1 text-[12px] text-zinc-500">{item.description}</div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-white/[0.06] bg-[#0f0f17] p-4 text-sm text-zinc-400">
+                  No matching commands.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <WorkflowCanvas
           ref={canvasRef}
@@ -1299,6 +1558,7 @@ export default function App(): ReactElement {
           palette={STUDIO_PALETTE}
           initialNodes={activeTab.nodes}
           initialEdges={activeTab.edges}
+          onFlowChange={onWorkflowChange}
           agentLibraryEntries={agentLibraryDoc.agents.map((a) => ({
             id: a.id,
             name: a.name,
@@ -1733,7 +1993,138 @@ export default function App(): ReactElement {
         </Dialog.Portal>
       </Dialog.Root>
 
+      {runDrawerOpen ? (
+        <div
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-white/[0.08] bg-[#09090e]/95 shadow-2xl backdrop-blur-xl"
+          style={{ height: `${runDrawerHeight}px` }}
+        >
+          <div
+            className="absolute left-0 top-0 h-2 w-full cursor-row-resize bg-transparent hover:bg-violet-400/30 transition-colors z-10"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setIsResizingRunDrawer(true);
+            }}
+          />
+          <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-4 h-full">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-zinc-100">Run log</p>
+                <p className="text-xs text-zinc-500">
+                  Live execution details, errors, and output summary stay visible while you edit.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRunDrawerOpen(false)}
+                  className="rounded-lg border border-white/[0.12] bg-[#1a1a22] px-3 py-2 text-sm text-zinc-200 hover:border-white/[0.18] hover:bg-[#22222c]"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRunOpen(true)}
+                  className="rounded-lg bg-gradient-to-r from-[#9d4fab] to-[#3b82f6] px-3 py-2 text-sm font-semibold text-white shadow-[0_2px_14px_rgba(59,130,246,0.18)] transition hover:brightness-[1.06]"
+                >
+                  Full output
+                </button>
+              </div>
+            </div>
+            <div className="rounded-3xl border border-white/[0.08] bg-[#12121a] p-4">
+              <RunInspectorPanel
+                runResult={runResult}
+                runError={runError}
+                workflowDefinition={lastRunDefinition}
+                liveSteps={runLiveSteps}
+                runBusy={runBusy}
+                onClear={() => {
+                  setRunResult(null);
+                  setRunError(null);
+                  setLastRunDefinition(null);
+                  setRunLiveSteps(null);
+                  setTabs((prev) =>
+                    (prev ?? []).map((t) =>
+                      t.tabId === activeTab.tabId
+                        ? {
+                            ...t,
+                            runFailedNodeIds: [],
+                            lastRunOutputs: undefined,
+                          }
+                        : t,
+                    ),
+                  );
+                }}
+                onOpenModal={() => setRunOpen(true)}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {debugOpen ? (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-white/[0.08] bg-[#09090e]/95 shadow-2xl backdrop-blur-xl">
+          <div className="mx-auto max-w-7xl px-4 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-zinc-100">Debug panel</p>
+                <p className="text-xs text-zinc-500">
+                  Current active tab and last run diagnostics for troubleshooting.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDebugOpen(false)}
+                className="rounded-lg border border-white/[0.12] bg-[#1a1a22] px-3 py-2 text-sm text-zinc-200 hover:border-white/[0.18] hover:bg-[#22222c]"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-3 rounded-3xl border border-white/[0.08] bg-[#12121a] p-4">
+              <pre className="max-h-[40vh] overflow-auto whitespace-pre-wrap break-all text-[11px] leading-relaxed text-zinc-300">
+{JSON.stringify(
+  {
+    activeTab: {
+      workflowId: activeTab.workflowId,
+      dirty: activeTab.dirty,
+      nodeCount: activeTab.nodes.length,
+      edgeCount: activeTab.edges.length,
+      runFailedNodeIds: activeTab.runFailedNodeIds,
+      lastRunOutputsCount: activeTab.lastRunOutputs
+        ? Object.keys(activeTab.lastRunOutputs).length
+        : 0,
+    },
+    runState: {
+      busy: runBusy,
+      runError,
+      liveSteps: runLiveSteps,
+      runResultStatus: runResult?.status,
+      asyncPhase: asyncRun.state.phase,
+    },
+  },
+  null,
+  2,
+)}
+              </pre>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <footer className="shrink-0 border-t border-white/[0.06] px-4 py-2 text-center text-[11px] leading-snug text-zinc-500">
+        <div className="mb-1 text-[10px] text-zinc-400">
+          {activeTab ? (
+            autoSavePending ? (
+              "Autosaving changes..."
+            ) : activeTab.dirty ? (
+              "Unsaved changes — autosave will persist after a short pause."
+            ) : activeTab.savedAt ? (
+              `Autosaved ${new Date(activeTab.savedAt).toLocaleTimeString()}`
+            ) : (
+              "Workflow is loaded and ready."
+            )
+          ) : (
+            "Studio is ready. Open or create a workflow to begin."
+          )}
+        </div>
         wfengine Studio · Save stores this workflow in your browser (localStorage) ·
         Drag to pan · Shift+drag to multi-select · Ctrl+C / Ctrl+V nodes · Fit & zoom
         on canvas controls

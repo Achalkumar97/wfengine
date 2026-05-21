@@ -26,6 +26,21 @@ export async function buildApp(deps: {
 }): Promise<ReturnType<typeof Fastify>> {
   const app = Fastify({ logger: true });
 
+  // API Versioning - Phase 0 Task 1
+  // Add API version header and support versioned routes
+  app.addHook('onRequest', async (request, reply) => {
+    // Set default API version header
+    reply.header('X-API-Version', '1.0.0');
+    
+    // Handle versioned route requests
+    const url = request.url;
+    if (url.startsWith('/api/v1/')) {
+      reply.header('X-API-Version', '1.0.0');
+    } else if (url.startsWith('/api/v2/')) {
+      reply.header('X-API-Version', '2.0.0');
+    }
+  });
+
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ZodError) {
       const message = error.issues

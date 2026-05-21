@@ -7,8 +7,67 @@ import {
   type ReactElement,
   type SyntheticEvent,
 } from "react";
-import type { AgentBucketRow } from "./agentCanvasBucket.js";
 import { cn } from "./cn.js";
+
+export interface AgentBucketRow {
+  name: string;
+  model: string;
+  systemPrompt: string;
+  source: "inline" | "library";
+}
+
+export interface AgentLibraryEntryLite {
+  id: string;
+  name: string;
+  model?: string;
+  systemPrompt?: string;
+}
+
+export function deriveAgentBucketRows(
+  wfType: string,
+  config: unknown,
+  libraryEntries: readonly AgentLibraryEntryLite[],
+): readonly AgentBucketRow[] {
+  if (!config || typeof config !== "object") return [];
+  const cfg = config as { agents?: unknown };
+  if (!cfg.agents || typeof cfg.agents !== "object") return [];
+  const agents = cfg.agents as unknown[];
+  if (!Array.isArray(agents)) return [];
+  return agents
+    .filter((a): a is Record<string, unknown> =>
+      a !== null &&
+      typeof a === "object" &&
+      "name" in a &&
+      typeof (a as any).name === "string" &&
+      "systemPrompt" in a &&
+      typeof (a as any).systemPrompt === "string"
+    )
+    .map((a) => {
+      const rec = a as Record<string, unknown>;
+      const src = rec.source;
+      const source: "inline" | "library" = (src === "inline" || src === "library") ? src : "inline";
+      const mod = rec.model;
+      const model = typeof mod === "string" ? mod : "";
+      return {
+        name: rec.name as string,
+        model,
+        systemPrompt: rec.systemPrompt as string,
+        source,
+      };
+    });
+}
+
+export function isAgentBucketNodeType(type: string): boolean {
+  return (
+    type === "autogen.multi-agent" ||
+    type === "autogen.single-agent" ||
+    type === "llm.openai.chat"
+  );
+}
+
+export function supportsCanvasAgentAdd(type: string): boolean {
+  return type === "autogen.multi-agent";
+}
 
 const COLLAPSE_AFTER = 4;
 const PREVIEW_COUNT = 3;

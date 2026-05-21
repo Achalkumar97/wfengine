@@ -14,6 +14,16 @@ export type ExecutionStatus =
   | "failed"
   | "cancelled";
 
+// Phase 2 Task 3: Add WorkflowState for state machine persistence
+export enum WorkflowState {
+  PENDING = 'PENDING',
+  EXECUTING = 'EXECUTING',
+  RETRYING = 'RETRYING',
+  PAUSED = 'PAUSED',
+  FAILED = 'FAILED',
+  COMPLETED = 'COMPLETED',
+}
+
 export interface CreateExecutionParams {
   workflowVersionId: string;
   initialData?: unknown;
@@ -238,5 +248,94 @@ export class ExecutionRepository {
     if (!record) return null;
     const logs = record.logs as Record<string, unknown> | null;
     return logs?.inlineDefinition ?? null;
+  }
+
+  // Phase 2 Task 3: Add state machine persistence methods
+  /**
+   * Persist state machine state to execution logs
+   */
+  async saveStateMachineState(
+    executionId: string,
+    stateMachineSnapshot: any
+  ): Promise<void> {
+    const existing = await this.prisma.execution.findUnique({
+      where: { id: executionId },
+      select: { logs: true },
+    });
+
+    const prev = (existing?.logs as Record<string, unknown> | null) ?? {};
+    const merged: Record<string, unknown> = {
+      ...prev,
+      stateMachine: stateMachineSnapshot,
+    };
+
+    await this.prisma.execution.update({
+      where: { id: executionId },
+      data: { logs: toJson(merged) },
+    });
+  }
+
+  /**
+   * Retrieve state machine state from execution logs
+   */
+  async getStateMachineState(executionId: string): Promise<any | null> {
+    const record = await this.prisma.execution.findUnique({
+      where: { id: executionId },
+      select: { logs: true },
+    });
+    if (!record) return null;
+    const logs = record.logs as Record<string, unknown> | null;
+    return logs?.stateMachine ?? null;
+  }
+
+  /**
+   * Update workflow state in execution logs
+   */
+  async updateWorkflowState(
+    executionId: string,
+    state: WorkflowState,
+    reason: string
+  ): Promise<void> {
+    const existing = await this.prisma.execution.findUnique({
+      where: { id: executionId },
+      select: { logs: true },
+    });
+
+    const prev = (existing?.logs as Record<string, unknown> | null) ?? {};
+    const stateHistory: Array<{ state: WorkflowState; timestamp: Date; reason: string }> =
+      Array.isArray(prev.stateHistory) ? [...prev.stateHistory] : [];
+
+    stateHistory.push({
+      state,
+      timestamp: new Date(),
+      reason,
+    });
+
+    const merged: Record<string, unknown> = {
+      ...prev,
+      workflowState: state,
+      stateHistory,
+    };
+
+    await this.prisma.execution.update({
+      where: { id: executionId },
+      data: { logs: toJson(merged) },
+    });
+  }
+
+  /**
+   * Get current workflow state from execution logs
+   */
+  async getWorkflowState(executionId: string): Promise<WorkflowState | null> {
+    const record = await this.prisma.execution.findUnique({
+      where: { id: executionId },
+      select: { logs: true },
+    });
+    if (!record) return null;
+    const logs = record.logs as Record<string, unknown> | null;
+    const state = logs?.workflowState;
+    return state && Object.values(WorkflowState).includes(state as WorkflowState)
+      ? (state as WorkflowState)
+      : null;
   }
 }

@@ -16,6 +16,50 @@ import type {
 } from "./node.types.js";
 import type { NodeRegistry } from "./registry.js";
 
+/**
+ * Fields that should NEVER be overridden by AI tool arguments.
+ * These are security-sensitive or infrastructure configuration fields
+ * that must remain under workflow author control.
+ */
+const PROTECTED_FIELDS = new Set([
+  // Email node - SMTP credentials and routing
+  "to",
+  "from",
+  "host",
+  "port",
+  "authUser",
+  "authPass",
+  "secure",
+  // Slack node - authentication
+  "token",
+  "channel",
+  // HTTP request - endpoint and auth
+  "url",
+  "apiKey",
+  "method",
+  "headers",
+  // File operations - paths
+  "path",
+  "filename",
+]);
+
+/**
+ * Remove protected fields from tool arguments to prevent AI from overriding
+ * workflow configuration. AI should only generate content fields (subject, text, etc.),
+ * not infrastructure/credential fields.
+ */
+function filterProtectedFields(
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const filtered: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (!PROTECTED_FIELDS.has(key)) {
+      filtered[key] = value;
+    }
+  }
+  return filtered;
+}
+
 /** Maximum nested workflow_node tool executions (prevents runaway recursion). */
 export const MAX_AGENT_TOOL_DEPTH = 6;
 
@@ -83,11 +127,35 @@ export function createAgentToolDispatch(
         params.initialData,
         params.edges,
       );
-      const inputData =
+      
+      // Filter out protected fields from AI tool arguments to prevent override
+      const safeArgs =
         args !== undefined &&
         typeof args === "object" &&
         !Array.isArray(args)
-          ? { ...baseInput, ...args }
+          ? filterProtectedFields(args as Record<string, unknown>)
+          : args;
+      
+      // Log if protected fields were filtered
+      if (args && safeArgs && Object.keys(args).length !== Object.keys(safeArgs).length) {
+        const filteredKeys = Object.keys(args).filter(
+          (k) => !Object.keys(safeArgs).includes(k),
+        );
+        params.context.logger.warn(
+          "[AGENT_TOOL_DISPATCH] Protected fields filtered from tool arguments",
+          {
+            nodeId: targetNodeId,
+            filteredFields: filteredKeys,
+            reason: "AI cannot override workflow configuration fields",
+          },
+        );
+      }
+      
+      const inputData =
+        safeArgs !== undefined &&
+        typeof safeArgs === "object" &&
+        !Array.isArray(safeArgs)
+          ? { ...baseInput, ...safeArgs }
           : baseInput;
 
       const def = params.registry.require(node.type, node.id);

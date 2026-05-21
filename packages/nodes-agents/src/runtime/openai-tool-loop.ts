@@ -556,6 +556,34 @@ export async function runOpenAiToolLoop(opts: {
           parsedArgs = { _raw: call.function.arguments };
         }
 
+        const aliasMap: Record<string, string> = {
+          slackText: "text",
+          message: "text",
+          content: "text",
+          body: "text",
+          htmlBody: "html",
+          recipients: "to",
+          recipient: "to",
+          emailRecipients: "to",
+          emailTo: "to",
+          addresses: "to",
+          email: "to",
+          recipientAddress: "to",
+          toAddress: "to",
+          toAddresses: "to",
+          title: "subject",
+          topic: "subject",
+          emailSubject: "subject",
+        };
+
+        const normalizedArgs: Record<string, unknown> = { ...parsedArgs };
+        for (const [key, value] of Object.entries(parsedArgs)) {
+          const canonical = aliasMap[key];
+          if (canonical && normalizedArgs[canonical] === undefined) {
+            normalizedArgs[canonical] = value;
+          }
+        }
+
         dbg.info("===== TOOL EXECUTION START =====", {
           turn: iter,
           toolCallId: call.id,
@@ -563,8 +591,8 @@ export async function runOpenAiToolLoop(opts: {
           toolFunctionName: fn,
           toolIndex: idx,
           toolKind: ref?.kind ?? "unknown",
-          argsPreview: truncateLargePayload(parsedArgs, 400),
-          argsKeys: Object.keys(parsedArgs),
+          argsPreview: truncateLargePayload(normalizedArgs, 400),
+          argsKeys: Object.keys(normalizedArgs),
           rawArgumentsLength: call.function.arguments?.length ?? 0,
           toolCallIdValid: Boolean(call.id && call.id.trim().length > 0),
         });
@@ -573,22 +601,40 @@ export async function runOpenAiToolLoop(opts: {
         let validationFailed = false;
 
         // ── TOOL ARGUMENT PRE-VALIDATION ─────────────────────────────────────
-        // Validate required arguments before executing tools to prevent API errors
+        // Validate known fields before executing tools to prevent obvious API errors
         if (ref?.kind === "workflow_node") {
+          // Required fields keyed by canonical workflow node type (wfType), plus
+          // backward-compatible legacy hyphenated names.
+          // Note: 'to' is optional for email.send since it can use config value as fallback
           const requiredFields: Record<string, string[]> = {
-            "send-email": ["subject", "text", "to"],
+            "email.send": ["subject", "text"],
+            "slack.send": ["text"],
+            // legacy keys still supported
+            "send-email": ["subject", "text"],
             "send-slack": ["text"],
           };
 
-          // Extract node type from nodeId (e.g., "send-email" from "send-email-abc123")
-          const nodeType = ref.nodeId.split("-")[0] + "-" + ref.nodeId.split("-")[1] || ref.nodeId;
-          const required = requiredFields[nodeType] || [];
+          const idParts = ref.nodeId.split("-");
+          const base = idParts[0] ?? ref.nodeId;
+          const legacy = idParts.length >= 2 ? `${idParts[0]}-${idParts[1]}` : base;
+          const nodeType = base || legacy || ref.nodeId;
+          const required = requiredFields[nodeType] || requiredFields[legacy] || [];
 
           for (const field of required) {
-            const value = parsedArgs[field];
-            if (!value || (typeof value === "string" && value.trim().length === 0)) {
+            const providedKeys = [
+              field,
+              ...Object.entries(aliasMap)
+                .filter(([, canonical]) => canonical === field)
+                .map(([alias]) => alias),
+            ];
+            const provided = providedKeys.some((key) =>
+              normalizedArgs[key] !== undefined &&
+              !(typeof normalizedArgs[key] === "string" && normalizedArgs[key].trim().length === 0),
+            );
+
+            if (!provided) {
               resultText = safeJsonStringify({
-                error: `Tool execution blocked: required field '${field}' is missing or empty for node '${ref.nodeId}'. The agent must provide this field in the tool call arguments.`,
+                error: `Tool execution blocked: missing required field '${field}' for node '${ref.nodeId}'. Provide '${field}' or a supported alias such as ${providedKeys.join(", ")}.`,
               });
               dbg.warn("===== TOOL ARGUMENT VALIDATION FAILED =====", {
                 turn: iter,
@@ -597,11 +643,37 @@ export async function runOpenAiToolLoop(opts: {
                 missingField: field,
                 nodeType,
                 requiredFields: required,
+                providedArgs: Object.keys(normalizedArgs),
+              });
+              validationFailed = true;
+              break;
+            }
+
+            const value = normalizedArgs[field];
+            if (
+              value === undefined ||
+              (typeof value === "string" && value.trim().length === 0)
+            ) {
+              resultText = safeJsonStringify({
+                error: `Tool execution blocked: required field '${field}' is empty for node '${ref.nodeId}'. Provide a non-empty '${field}' or a supported alias.`,
+              });
+              dbg.warn("===== TOOL ARGUMENT VALIDATION FAILED =====", {
+                turn: iter,
+                toolCallId: call.id,
+                toolName,
+                missingField: field,
+                nodeType,
+                requiredFields: required,
+                providedArgs: Object.keys(normalizedArgs),
               });
               validationFailed = true;
               break;
             }
           }
+        }
+
+        if (!validationFailed && ref?.kind === "workflow_node") {
+          parsedArgs = normalizedArgs;
         }
 
         if (validationFailed) {

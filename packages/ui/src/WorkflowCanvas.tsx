@@ -120,6 +120,8 @@ export interface WorkflowCanvasProps {
     canUndo: boolean;
     canRedo: boolean;
   }) => void;
+  /** Fired when the workflow graph changes (nodes or edges). */
+  onFlowChange?: (nodes: Node<WfNodeData>[], edges: Edge[]) => void;
   /** Icon for each palette row (Lucide etc.) — runs in Studio only */
   renderPaletteIcon?: (meta: PaletteNodeMeta) => ReactNode;
   /** Node ids that failed in the last run — shown with error styling on canvas */
@@ -360,6 +362,15 @@ const WorkflowCanvasInner = forwardRef<
   const [edges, setEdges, onEdgesChange] = useEdgesState(
     props.initialEdges ?? [],
   );
+  const hasSyncedInitialFlow = useRef(false);
+
+  useEffect(() => {
+    if (!hasSyncedInitialFlow.current) {
+      hasSyncedInitialFlow.current = true;
+      return;
+    }
+    props.onFlowChange?.(nodes, edges);
+  }, [edges, nodes, props.onFlowChange]);
 
   const labelResolver = useCallback(
     (type: string) =>
@@ -382,8 +393,134 @@ const WorkflowCanvasInner = forwardRef<
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedNode = nodes.find((n) => n.id === selectedId);
+  const previousSelectedIdRef = useRef<string | null>(null);
   const [overviewOpen, setOverviewOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<InspectorMainTab>("workflow");
+  const [libraryCollapsed, setLibraryCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("wfengine.canvas.libraryCollapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("wfengine.canvas.inspectorCollapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [libraryWidth, setLibraryWidth] = useState(() => {
+    if (typeof window === "undefined") return 280;
+    try {
+      const saved = window.localStorage.getItem("wfengine.canvas.libraryWidth");
+      return saved ? Math.max(200, Math.min(500, Number(saved))) : 280;
+    } catch {
+      return 280;
+    }
+  });
+  const [inspectorWidth, setInspectorWidth] = useState(() => {
+    if (typeof window === "undefined") return 300;
+    try {
+      const saved = window.localStorage.getItem("wfengine.canvas.inspectorWidth");
+      return saved ? Math.max(250, Math.min(600, Number(saved))) : 300;
+    } catch {
+      return 300;
+    }
+  });
+  const [isResizingLibrary, setIsResizingLibrary] = useState(false);
+  const [isResizingInspector, setIsResizingInspector] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        "wfengine.canvas.libraryCollapsed",
+        String(libraryCollapsed),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [libraryCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        "wfengine.canvas.inspectorCollapsed",
+        String(inspectorCollapsed),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [inspectorCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        "wfengine.canvas.libraryWidth",
+        String(libraryWidth),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [libraryWidth]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        "wfengine.canvas.inspectorWidth",
+        String(inspectorWidth),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [inspectorWidth]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isResizingLibrary) {
+        const newWidth = Math.max(200, Math.min(500, e.clientX));
+        setLibraryWidth(newWidth);
+      }
+      if (isResizingInspector) {
+        const newWidth = Math.max(250, Math.min(600, window.innerWidth - e.clientX));
+        setInspectorWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingLibrary(false);
+      setIsResizingInspector(false);
+    };
+
+    if (isResizingLibrary || isResizingInspector) {
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp);
+      return () => {
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      };
+    }
+  }, [isResizingLibrary, isResizingInspector]);
+
+  useEffect(() => {
+    const previousSelectedId = previousSelectedIdRef.current;
+    previousSelectedIdRef.current = selectedId;
+
+    if (selectedId && selectedId !== previousSelectedId && !inspectorCollapsed) {
+      setInspectorTab("node");
+      return;
+    }
+
+    if (!selectedId && previousSelectedId) {
+      setInspectorTab((tab) => (tab === "node" ? "workflow" : tab));
+    }
+  }, [selectedId, inspectorCollapsed]);
 
   const updateNodeConfig = useCallback(
     (nodeId: string, config: Record<string, unknown>) => {
@@ -754,61 +891,94 @@ const WorkflowCanvasInner = forwardRef<
         )}
       >
         {/* Fixed-width library: avoids react-resizable-panels % / min-width fighting and collapsed sidebars */}
-        <aside className="flex h-full w-[280px] shrink-0 flex-col overflow-hidden border-r border-white/[0.06] bg-[#13131a] sm:w-[300px]">
-          <div className="shrink-0 border-b border-white/[0.06] px-3 py-3">
-            <p className="font-[system-ui,-apple-system,sans-serif] text-[12px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
-              Node Library
-            </p>
-            <input
-              type="search"
-              placeholder="Search nodes…"
-              value={paletteQuery}
-              onChange={(e) => setPaletteQuery(e.target.value)}
-              className="mt-2 w-full min-w-0 rounded-lg border border-white/[0.08] bg-[#1a1a22] px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none ring-violet-400/15 focus:border-violet-400/45 focus:ring-2"
+        <aside
+          className={cn(
+            "flex h-full shrink-0 flex-col overflow-hidden border-r border-white/[0.06] bg-[#13131a] relative",
+            libraryCollapsed ? "w-[48px]" : "",
+          )}
+          style={!libraryCollapsed ? { width: `${libraryWidth}px` } : undefined}
+        >
+          {!libraryCollapsed && (
+            <div
+              className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-violet-400/30 transition-colors z-10"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsResizingLibrary(true);
+              }}
             />
-          </div>
-          <div className="wf-panel-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 py-3">
-            {groupedPalette.map(({ key, items }) => (
-              <details
-                key={key}
-                open
-                className="group mb-2.5 rounded-xl border border-white/[0.06] bg-[#16161f]/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]"
+          )}
+          <div className="shrink-0 border-b border-white/[0.06] px-3 py-3">
+            <div className={cn("flex items-center gap-2", libraryCollapsed ? "justify-center" : "justify-between")}>
+              {!libraryCollapsed && (
+                <p className="font-[system-ui,-apple-system,sans-serif] text-[12px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+                  Node Library
+                </p>
+              )}
+              <button
+                type="button"
+                title={libraryCollapsed ? "Expand node library" : "Collapse node library"}
+                aria-label={libraryCollapsed ? "Expand node library" : "Collapse node library"}
+                aria-expanded={!libraryCollapsed}
+                onClick={() => setLibraryCollapsed((prev) => !prev)}
+                className="rounded-md border border-white/[0.08] bg-[#16161f] px-2 py-1 text-[10px] font-semibold text-zinc-300 shadow-sm transition hover:border-violet-400/35 hover:text-zinc-100"
               >
-                <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold tracking-wide text-zinc-400 hover:text-zinc-200">
-                  {key}
-                </summary>
-                <div className="space-y-1.5 px-2 pb-3 pt-1">
-                  {items.map((p) => (
-                    <button
-                      key={p.type}
-                      type="button"
-                      draggable
-                      title={p.description}
-                      onDragStart={(e) => onDragStartPalette(e, p)}
-                      onClick={() => addNode(p)}
-                      className="flex w-full flex-col rounded-lg border border-white/[0.06] bg-[#1a1a22]/90 px-2.5 py-2.5 text-left transition hover:border-violet-400/35 hover:bg-[#222231]/95"
-                    >
-                      <span className="flex items-start gap-2">
-                        <span className="mt-0.5 shrink-0 text-violet-400 opacity-90">
-                          {props.renderPaletteIcon?.(p) ?? (
-                            <span className="inline-block h-4 w-4 rounded bg-zinc-800" />
-                          )}
-                        </span>
-                        <span className="text-[13px] font-medium leading-snug text-zinc-200">
-                          {p.label}
-                        </span>
-                      </span>
-                      {p.description ? (
-                        <span className="mt-0.5 line-clamp-2 break-words text-[11px] leading-snug text-zinc-400">
-                          {p.description}
-                        </span>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
-              </details>
-            ))}
+                {libraryCollapsed ? ">>" : "<<"}
+              </button>
+            </div>
+            {!libraryCollapsed ? (
+              <input
+                type="search"
+                placeholder="Search nodes…"
+                value={paletteQuery}
+                onChange={(e) => setPaletteQuery(e.target.value)}
+                className="mt-2 w-full min-w-0 rounded-lg border border-white/[0.08] bg-[#1a1a22] px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none ring-violet-400/15 focus:border-violet-400/45 focus:ring-2"
+              />
+            ) : null}
           </div>
+          {!libraryCollapsed ? (
+            <div className="wf-panel-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 py-3">
+              {groupedPalette.map(({ key, items }) => (
+                <details
+                  key={key}
+                  open
+                  className="group mb-2.5 rounded-xl border border-white/[0.06] bg-[#16161f]/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]"
+                >
+                  <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold tracking-wide text-zinc-400 hover:text-zinc-200">
+                    {key}
+                  </summary>
+                  <div className="space-y-1.5 px-2 pb-3 pt-1">
+                    {items.map((p) => (
+                      <button
+                        key={p.type}
+                        type="button"
+                        draggable
+                        title={p.description}
+                        onDragStart={(e) => onDragStartPalette(e, p)}
+                        onClick={() => addNode(p)}
+                        className="flex w-full flex-col rounded-lg border border-white/[0.06] bg-[#1a1a22]/90 px-2.5 py-2.5 text-left transition hover:border-violet-400/35 hover:bg-[#222231]/95"
+                      >
+                        <span className="flex items-start gap-2">
+                          <span className="mt-0.5 shrink-0 text-violet-400 opacity-90">
+                            {props.renderPaletteIcon?.(p) ?? (
+                              <span className="inline-block h-4 w-4 rounded bg-zinc-800" />
+                            )}
+                          </span>
+                          <span className="text-[13px] font-medium leading-snug text-zinc-200">
+                            {p.label}
+                          </span>
+                        </span>
+                        {p.description ? (
+                          <span className="mt-0.5 line-clamp-2 break-words text-[11px] leading-snug text-zinc-400">
+                            {p.description}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              ))}
+            </div>
+          ) : null}
         </aside>
 
         <div className="relative min-h-0 min-w-0 flex-1 bg-[#09090e]">
@@ -931,52 +1101,82 @@ const WorkflowCanvasInner = forwardRef<
           </RunFailureContext.Provider>
         </div>
 
-        <aside className="flex h-full w-[300px] shrink-0 flex-col overflow-hidden border-l border-white/[0.06] bg-[#13131a] lg:w-[340px]">
-          <div className="shrink-0 border-b border-white/[0.06] px-4 py-3">
-            <p className="font-[system-ui,-apple-system,sans-serif] text-[12px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
-              Inspector
-            </p>
+        <aside
+          className={cn(
+            "flex h-full shrink-0 flex-col overflow-hidden border-l border-white/[0.06] bg-[#13131a] relative",
+            inspectorCollapsed ? "w-[48px]" : "",
+          )}
+          style={!inspectorCollapsed ? { width: `${inspectorWidth}px` } : undefined}
+        >
+          {!inspectorCollapsed && (
             <div
-              className="mt-3 flex rounded-lg border border-white/[0.08] bg-[#16161f] p-0.5"
-              role="tablist"
-              aria-label="Inspector sections"
-            >
-              {(
-                [
-                  ["workflow", "Workflow"],
-                  ["node", "Node"],
-                  ["run", "Run"],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={inspectorTab === id}
-                  id={`inspector-tab-${id}`}
-                  onClick={() => setInspectorTab(id)}
-                  className={cn(
-                    "flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition",
-                    inspectorTab === id
-                      ? "bg-[#252530] text-zinc-100 shadow-sm ring-1 ring-white/[0.06]"
-                      : "text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-300",
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="wf-panel-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-3">
-            {inspectorTab === "workflow" ? (
-              props.renderWorkflowInspector ? (
-                props.renderWorkflowInspector()
-              ) : (
-                <p className="text-sm leading-relaxed text-zinc-400">
-                  Workflow-level settings are not configured for this canvas.
+              className="absolute left-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-violet-400/30 transition-colors z-10"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsResizingInspector(true);
+              }}
+            />
+          )}
+          <div className="shrink-0 border-b border-white/[0.06] px-4 py-3">
+            <div className={cn("flex items-center gap-2", inspectorCollapsed ? "justify-center" : "justify-between")}>
+              {!inspectorCollapsed && (
+                <p className="font-[system-ui,-apple-system,sans-serif] text-[12px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+                  Inspector
                 </p>
-              )
-            ) : inspectorTab === "node" ? (
+              )}
+              <button
+                type="button"
+                aria-label={inspectorCollapsed ? "Expand inspector" : "Collapse inspector"}
+                onClick={() => setInspectorCollapsed((prev) => !prev)}
+                className="rounded-md border border-white/[0.08] bg-[#16161f] px-2 py-1 text-[10px] font-semibold text-zinc-300 shadow-sm transition hover:border-violet-400/35 hover:text-zinc-100"
+              >
+                {inspectorCollapsed ? "<<" : ">>"}
+              </button>
+            </div>
+            {!inspectorCollapsed ? (
+              <div
+                className="mt-3 flex rounded-lg border border-white/[0.08] bg-[#16161f] p-0.5"
+                role="tablist"
+                aria-label="Inspector sections"
+              >
+                {(
+                  [
+                    ["workflow", "Workflow"],
+                    ["node", "Node"],
+                    ["run", "Run"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={inspectorTab === id}
+                    id={`inspector-tab-${id}`}
+                    onClick={() => setInspectorTab(id)}
+                    className={cn(
+                      "flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition",
+                      inspectorTab === id
+                        ? "bg-[#252530] text-zinc-100 shadow-sm ring-1 ring-white/[0.06]"
+                        : "text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-300",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          {!inspectorCollapsed ? (
+            <div className="wf-panel-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-3">
+              {inspectorTab === "workflow" ? (
+                props.renderWorkflowInspector ? (
+                  props.renderWorkflowInspector()
+                ) : (
+                  <p className="text-sm leading-relaxed text-zinc-400">
+                    Workflow-level settings are not configured for this canvas.
+                  </p>
+                )
+              ) : inspectorTab === "node" ? (
               selectedNode ? (
                 <>
                   <div className="mb-3 rounded-xl border border-white/[0.06] bg-[#1a1a22] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
@@ -1018,6 +1218,7 @@ const WorkflowCanvasInner = forwardRef<
               </p>
             )}
           </div>
+        ) : null}
         </aside>
       </div>
     </NodeActionsProvider>
